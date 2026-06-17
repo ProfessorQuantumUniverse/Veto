@@ -1,13 +1,19 @@
 // MainActivity.kt
 package com.quantum_prof.vtscansuite
 
+import android.Manifest
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.util.Patterns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.core.content.ContextCompat
+import com.quantum_prof.vtscansuite.scan.ScanNotifications
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -29,9 +35,13 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: DashboardViewModel by viewModels()
 
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* optional */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         handleIntent(intent)
+        requestNotificationPermissionIfNeeded()
 
         setContent {
             VTExpressTheme {
@@ -43,13 +53,18 @@ class MainActivity : ComponentActivity() {
                     val apps by viewModel.installedApps.collectAsState()
                     val clipboardUrl by viewModel.clipboardUrl.collectAsState()
                     val apiKey by viewModel.apiKey.collectAsState()
+                    val savedScans by viewModel.savedScans.collectAsState()
 
                     // Lokaler State zur Steuerung der Bildschirmnavigation
                     var activeReport by remember { mutableStateOf<FileReportResponse?>(null) }
+                    var activeLabel by remember { mutableStateOf("") }
 
-                    if (activeReport != null) {
+                    val report = activeReport
+                    if (report != null) {
                         ResultsScreen(
-                            report = activeReport!!,
+                            report = report,
+                            isSaved = savedScans.any { it.id == report.data.id },
+                            onToggleSave = { viewModel.toggleSave(report, activeLabel) },
                             onBackClick = {
                                 activeReport = null
                                 viewModel.resetState() // Setzt Dashboard zurück auf Idle
@@ -61,12 +76,16 @@ class MainActivity : ComponentActivity() {
                             installedApps = apps,
                             clipboardUrl = clipboardUrl,
                             apiKeySaved = apiKey.isNotEmpty(),
+                            savedScans = savedScans,
                             onAppSelected = { app -> viewModel.scanApp(app) },
                             onManualScan = { url -> viewModel.scanUrl(url) },
-                            onCustomFileSelected = { uri -> viewModel.scanUri(this@MainActivity, uri) },
+                            onCustomFileSelected = { uri -> viewModel.scanUri(uri) },
                             onSaveApiKey = { newKey -> viewModel.saveApiKey(newKey) },
-                            onNavigateToResults = { report ->
-                                activeReport = report
+                            onOpenSavedScan = { saved -> viewModel.openSavedScan(saved) },
+                            onDeleteSavedScan = { saved -> viewModel.deleteSavedScan(saved) },
+                            onNavigateToResults = { r, label ->
+                                activeReport = r
+                                activeLabel = label
                             }
                         )
                     }
@@ -78,6 +97,18 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         checkClipboardForUrl()
+        // Ergebnis-Notification entfernen, sobald der Nutzer in der App ist
+        ScanNotifications.cancelResult(this)
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

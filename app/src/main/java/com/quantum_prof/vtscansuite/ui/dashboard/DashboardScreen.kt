@@ -6,29 +6,41 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -39,16 +51,30 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.quantum_prof.vtscansuite.data.model.FileReportResponse
+import com.quantum_prof.vtscansuite.data.model.SavedScan
+import com.quantum_prof.vtscansuite.domain.repository.ScanPhase
 import com.quantum_prof.vtscansuite.domain.usecase.InstalledApp
+import com.quantum_prof.vtscansuite.ui.components.ExpressiveProgressBar
+import com.quantum_prof.vtscansuite.ui.components.GradientButton
 import com.quantum_prof.vtscansuite.ui.dashboard.components.ClipboardBanner
+import com.quantum_prof.vtscansuite.ui.theme.CookieShape
+import com.quantum_prof.vtscansuite.ui.theme.auroraBrush
+import com.quantum_prof.vtscansuite.ui.theme.expressive
+import com.quantum_prof.vtscansuite.ui.theme.fadeThrough
 import com.quantum_prof.vtscansuite.ui.util.HapticType
+import com.quantum_prof.vtscansuite.ui.util.formatEpochSeconds
+import com.quantum_prof.vtscansuite.ui.util.pressScale
+import com.quantum_prof.vtscansuite.ui.util.scaleOnPress
 import com.quantum_prof.vtscansuite.ui.util.triggerHaptic
+import kotlinx.coroutines.delay
+import java.util.Locale
 
 enum class DashboardSubScreen {
     Home,
     UrlScan,
     CustomFileScan,
     InstalledApps,
+    SavedScans,
     Settings
 }
 
@@ -59,35 +85,50 @@ fun DashboardScreen(
     installedApps: List<InstalledApp>,
     clipboardUrl: String?,
     apiKeySaved: Boolean,
+    savedScans: List<SavedScan>,
     onAppSelected: (InstalledApp) -> Unit,
     onManualScan: (String) -> Unit,
     onCustomFileSelected: (Uri) -> Unit,
     onSaveApiKey: (String) -> Unit,
-    onNavigateToResults: (FileReportResponse) -> Unit
+    onOpenSavedScan: (SavedScan) -> Unit,
+    onDeleteSavedScan: (SavedScan) -> Unit,
+    onNavigateToResults: (FileReportResponse, String) -> Unit
 ) {
     val view = LocalView.current
     val context = LocalContext.current
     var currentScreen by remember { mutableStateOf(DashboardSubScreen.Home) }
 
+    // Steuert, ob das Vollbild-Overlay angezeigt oder der Scan im Hintergrund läuft
+    var backgrounded by remember { mutableStateOf(false) }
+    // Bei jedem neuen Scan (neue Startzeit) das Overlay wieder einblenden
+    LaunchedEffect((state as? DashboardState.Loading)?.startedAt) {
+        if (state is DashboardState.Loading) backgrounded = false
+    }
+
     // Navigationstrigger bei erfolgreichem Scan-Durchlauf
     LaunchedEffect(state) {
         if (state is DashboardState.Success) {
-            onNavigateToResults(state.report)
+            onNavigateToResults(state.report, state.label)
         }
     }
 
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
+            modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
             topBar = {
                 CenterAlignedTopAppBar(
+                    scrollBehavior = scrollBehavior,
                     title = {
                         Text(
                             when (currentScreen) {
                                 DashboardSubScreen.Home -> "VT Express"
-                                DashboardSubScreen.UrlScan -> "Link-Scanner"
-                                DashboardSubScreen.CustomFileScan -> "Datei-Scanner"
-                                DashboardSubScreen.InstalledApps -> "App-Scanner"
-                                DashboardSubScreen.Settings -> "Einstellungen"
+                                DashboardSubScreen.UrlScan -> "Link Scanner"
+                                DashboardSubScreen.CustomFileScan -> "File Scanner"
+                                DashboardSubScreen.InstalledApps -> "App Scanner"
+                                DashboardSubScreen.SavedScans -> "Saved Scans"
+                                DashboardSubScreen.Settings -> "Settings"
                             },
                             fontWeight = FontWeight.Black,
                             style = MaterialTheme.typography.titleLarge
@@ -99,7 +140,7 @@ fun DashboardScreen(
                                 triggerHaptic(view, HapticType.CLICK)
                                 currentScreen = DashboardSubScreen.Home
                             }) {
-                                Icon(Icons.Default.ArrowBack, contentDescription = "Zurück")
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                             }
                         }
                     },
@@ -109,26 +150,27 @@ fun DashboardScreen(
                                 triggerHaptic(view, HapticType.CLICK)
                                 currentScreen = DashboardSubScreen.Settings
                             }) {
-                                Icon(Icons.Default.Settings, contentDescription = "Einstellungen")
+                                Icon(Icons.Default.Settings, contentDescription = "Settings")
                             }
                         }
                     },
-                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface
-                    )
                 )
             }
         ) { innerPadding ->
-            Box(
+            AnimatedContent(
+                targetState = currentScreen,
+                transitionSpec = { fadeThrough() },
+                label = "subScreenNav",
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
-            ) {
+            ) { screen ->
                 // Navigations-Routing für Sub-Screens
-                when (currentScreen) {
+                when (screen) {
                     DashboardSubScreen.Home -> HomeScreen(
                         apiKeySaved = apiKeySaved,
                         clipboardUrl = clipboardUrl,
+                        savedCount = savedScans.size,
                         onScanClipboard = { url ->
                             onManualScan(url)
                         },
@@ -150,6 +192,12 @@ fun DashboardScreen(
                         apiKeySaved = apiKeySaved,
                         onAppSelected = { onAppSelected(it) }
                     )
+                    DashboardSubScreen.SavedScans -> SavedScansScreen(
+                        savedScans = savedScans,
+                        apiKeySaved = apiKeySaved,
+                        onOpenSavedScan = { onOpenSavedScan(it) },
+                        onDeleteSavedScan = { onDeleteSavedScan(it) }
+                    )
                     DashboardSubScreen.Settings -> SettingsScreen(
                         apiKeySaved = apiKeySaved,
                         onSaveApiKey = {
@@ -163,48 +211,50 @@ fun DashboardScreen(
 
         // 1. SATISFYING FULL SCREEN LOADING OVERLAY
         AnimatedVisibility(
-            visible = state is DashboardState.Loading,
+            visible = state is DashboardState.Loading && !backgrounded,
             enter = fadeIn() + scaleIn(initialScale = 0.9f),
             exit = fadeOut() + scaleOut(targetScale = 0.9f)
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.65f))
-                    .clickable(enabled = false) {}, // Interaktionen blockieren
-                contentAlignment = Alignment.Center
+            val loading = state as? DashboardState.Loading
+            ScanningOverlay(
+                loading = loading,
+                onRunInBackground = { backgrounded = true }
+            )
+        }
+
+        // 1b. Minimierter Hinweis, während der Scan im Hintergrund weiterläuft
+        AnimatedVisibility(
+            visible = state is DashboardState.Loading && backgrounded,
+            enter = fadeIn() + scaleIn(initialScale = 0.8f),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            Surface(
+                onClick = {
+                    triggerHaptic(view, HapticType.CLICK)
+                    backgrounded = false
+                },
+                modifier = Modifier.padding(20.dp),
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                shadowElevation = 6.dp
             ) {
-                Card(
-                    modifier = Modifier
-                        .padding(32.dp)
-                        .fillMaxWidth(),
-                    shape = MaterialTheme.shapes.extraLarge,
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                Row(
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(20.dp)
-                    ) {
-                        CircularProgressIndicator(
-                            strokeWidth = 6.dp,
-                            modifier = Modifier.size(64.dp),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = (state as? DashboardState.Loading)?.message ?: "Analysiere...",
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "Bitte schließe die App nicht, während wir das Untersuchungsergebnis von VirusTotal abrufen.",
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    CircularProgressIndicator(
+                        strokeWidth = 2.5.dp,
+                        modifier = Modifier.size(18.dp),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        "Scanning in background…",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
                 }
             }
         }
@@ -221,7 +271,7 @@ fun DashboardScreen(
                             onSaveApiKey("") // Triggert VM-Methode um state zurückzusetzen, oder rufe Hilfsmethode auf
                         }
                     ) {
-                        Text("Verstanden")
+                        Text("Got it")
                     }
                 },
                 title = {
@@ -234,7 +284,7 @@ fun DashboardScreen(
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.error
                         )
-                        Text("Prüfung fehlgeschlagen", fontWeight = FontWeight.Bold)
+                        Text("Scan failed", fontWeight = FontWeight.Bold)
                     }
                 },
                 text = {
@@ -250,12 +300,124 @@ fun DashboardScreen(
 }
 
 // ====================================================================================
+// SCANNING OVERLAY (mit Zeitschätzung & Hintergrund-Option)
+// ====================================================================================
+@Composable
+private fun ScanningOverlay(
+    loading: DashboardState.Loading?,
+    onRunInBackground: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.65f))
+            .clickable(enabled = false) {}, // Interaktionen blockieren
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier
+                .padding(32.dp)
+                .fillMaxWidth(),
+            shape = MaterialTheme.shapes.extraLarge,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier.padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                val infinite = rememberInfiniteTransition(label = "scanGlow")
+                val pulse by infinite.animateFloat(
+                    initialValue = 0.85f, targetValue = 1.12f,
+                    animationSpec = infiniteRepeatable(tween(1100), RepeatMode.Reverse),
+                    label = "pulse"
+                )
+                Box(contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier
+                            .size(96.dp)
+                            .scale(pulse)
+                            .clip(CookieShape(scallops = 12, amplitude = 0.06f))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
+                    )
+                    Icon(
+                        Icons.Default.Shield,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(40.dp)
+                    )
+                }
+                Text(
+                    text = loading?.message ?: "Working…",
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                // Tickender Timer für die verstrichene Zeit
+                var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+                LaunchedEffect(loading?.startedAt) {
+                    while (true) {
+                        nowMs = System.currentTimeMillis()
+                        delay(1000)
+                    }
+                }
+                val startedAt = loading?.startedAt?.takeIf { it > 0 } ?: nowMs
+                val elapsedSec = ((nowMs - startedAt) / 1000).coerceAtLeast(0)
+                val mmss = String.format(Locale.US, "%02d:%02d", elapsedSec / 60, elapsedSec % 60)
+
+                // M3 Fortschrittsbalken: determiniert beim Upload, sonst gleitend
+                ExpressiveProgressBar(progress = loading?.progress)
+
+                Text(
+                    text = loading?.progress?.let { "$mmss · ${(it * 100).toInt()}% uploaded" }
+                        ?: "$mmss · ${estimateText(loading?.phase, elapsedSec)}",
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "VirusTotal scans can take a while for new files. You can close the app — we'll send a notification when the results are ready.",
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                FilledTonalButton(
+                    onClick = onRunInBackground,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large
+                ) {
+                    Icon(Icons.Default.Notifications, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Run in background", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+/** Grobe, ehrliche Zeitschätzung je nach Phase. */
+private fun estimateText(phase: ScanPhase?, elapsedSec: Long): String = when (phase) {
+    ScanPhase.UPLOADING -> "uploading…"
+    ScanPhase.SUBMITTING -> "submitting URL…"
+    ScanPhase.ANALYZING ->
+        if (elapsedSec < 120) "estimated wait: up to ~2 min"
+        else "still analyzing — large or brand-new files can take several minutes"
+    ScanPhase.FETCHING -> "almost done…"
+    else -> "checking database…"
+}
+
+// ====================================================================================
 // SUB-SCREEN 1: HOMEPAGE (Satisfying Grid & Overview)
 // ====================================================================================
 @Composable
 fun HomeScreen(
     apiKeySaved: Boolean,
     clipboardUrl: String?,
+    savedCount: Int,
     onScanClipboard: (String) -> Unit,
     onNavigateTo: (DashboardSubScreen) -> Unit
 ) {
@@ -269,49 +431,70 @@ fun HomeScreen(
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
-        // Status Card mit elegantem Verlauf
+        // Status Card mit lebendigem "Aurora"-Verlauf
         val statusGradient = if (apiKeySaved) {
-            Brush.linearGradient(
-                colors = listOf(
-                    MaterialTheme.colorScheme.primary,
-                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f)
-                )
-            )
+            auroraBrush()
         } else {
             Brush.linearGradient(
                 colors = listOf(
                     MaterialTheme.colorScheme.error,
-                    MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f)
+                    MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)
                 )
             )
         }
+        val onGradient = if (apiKeySaved) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onError
 
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = MaterialTheme.shapes.extraLarge,
             colors = CardDefaults.cardColors(containerColor = Color.Transparent)
         ) {
-            Box(
-                modifier = Modifier
-                    .background(statusGradient)
-                    .padding(28.dp)
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = if (apiKeySaved) "System geschützt ✨" else "API-Key fehlt 🔑",
-                        color = if (apiKeySaved) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onError,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 24.sp
-                    )
-                    Text(
-                        text = if (apiKeySaved) {
-                            "Wähle ein Modul aus, um Links, APK-Dateien oder Apps tiefgehend auf Schadsoftware zu testen."
-                        } else {
-                            "Bitte füge in den Einstellungen einen VirusTotal API-Key hinzu, um die Analyse-Engine zu aktivieren."
-                        },
-                        color = if (apiKeySaved) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onError.copy(alpha = 0.85f),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+            Box(modifier = Modifier.background(statusGradient)) {
+                // Dekoratives Cookie-Siegel im Hintergrund
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 8.dp, end = 8.dp)
+                        .size(120.dp)
+                        .clip(CookieShape(scallops = 12, amplitude = 0.06f))
+                        .background(onGradient.copy(alpha = 0.10f))
+                )
+                Row(
+                    modifier = Modifier.padding(28.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(18.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(54.dp)
+                            .clip(CircleShape)
+                            .background(onGradient.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            if (apiKeySaved) Icons.Default.VerifiedUser else Icons.Default.Key,
+                            contentDescription = null,
+                            tint = onGradient,
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = if (apiKeySaved) "Ready to scan ✨" else "API key required 🔑",
+                            color = onGradient,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 24.sp
+                        )
+                        Text(
+                            text = if (apiKeySaved) {
+                                "Pick a module below to deep-scan links, files or installed apps against 70+ antivirus engines."
+                            } else {
+                                "Add your VirusTotal API key in Settings to activate the scan engine."
+                            },
+                            color = onGradient.copy(alpha = 0.88f),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
                 }
             }
         }
@@ -327,7 +510,7 @@ fun HomeScreen(
         )
 
         Text(
-            "SCAN-METHODEN",
+            "SCAN METHODS",
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary,
@@ -336,9 +519,9 @@ fun HomeScreen(
 
         // Expressive Card 1: URL / Links
         HomeMenuCard(
-            title = "URL / Link scannen",
-            subtitle = "Prüfe Internetadressen & Downloads",
-            icon = Icons.Default.Send,
+            title = "Scan a URL / link",
+            subtitle = "Check web addresses & downloads",
+            icon = Icons.Default.TravelExplore,
             containerColor = MaterialTheme.colorScheme.primaryContainer,
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
             onClick = { onNavigateTo(DashboardSubScreen.UrlScan) }
@@ -346,9 +529,9 @@ fun HomeScreen(
 
         // Expressive Card 2: Custom File
         HomeMenuCard(
-            title = "Eigene Datei prüfen",
-            subtitle = "Analysiere Dokumente, Bilder oder APKs",
-            icon = Icons.Default.Refresh,
+            title = "Check your own file",
+            subtitle = "Analyze documents, images or APKs",
+            icon = Icons.Default.Description,
             containerColor = MaterialTheme.colorScheme.secondaryContainer,
             contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
             onClick = { onNavigateTo(DashboardSubScreen.CustomFileScan) }
@@ -356,12 +539,22 @@ fun HomeScreen(
 
         // Expressive Card 3: Installed Apps
         HomeMenuCard(
-            title = "Installierte Apps",
-            subtitle = "Sicherheitsprüfung für System- & Drittanbieter-Apps",
-            icon = Icons.Default.Build,
+            title = "Installed apps",
+            subtitle = "Security check for your installed apps",
+            icon = Icons.Default.Android,
             containerColor = MaterialTheme.colorScheme.tertiaryContainer,
             contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
             onClick = { onNavigateTo(DashboardSubScreen.InstalledApps) }
+        )
+
+        // Expressive Card 4: Saved Scans
+        HomeMenuCard(
+            title = "Saved scans",
+            subtitle = if (savedCount > 0) "$savedCount saved · refreshed on reopen" else "Bookmark results to revisit them",
+            icon = Icons.Default.Bookmark,
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            onClick = { onNavigateTo(DashboardSubScreen.SavedScans) }
         )
     }
 }
@@ -376,15 +569,19 @@ fun HomeMenuCard(
     onClick: () -> Unit
 ) {
     val view = LocalView.current
+    val interaction = remember { MutableInteractionSource() }
+    val scale = pressScale(interaction, scaleDown = 0.96f)
     Card(
+        onClick = {
+            triggerHaptic(view, HapticType.CLICK)
+            onClick()
+        },
         modifier = Modifier
             .fillMaxWidth()
-            .clickable {
-                triggerHaptic(view, HapticType.CLICK)
-                onClick()
-            },
+            .scaleOnPress(scale),
         shape = MaterialTheme.shapes.extraLarge,
-        colors = CardDefaults.cardColors(containerColor = containerColor)
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+        interactionSource = interaction
     ) {
         Row(
             modifier = Modifier
@@ -411,7 +608,8 @@ fun HomeMenuCard(
             Box(
                 modifier = Modifier
                     .size(56.dp)
-                    .background(contentColor.copy(alpha = 0.15f), CircleShape),
+                    .clip(CookieShape(scallops = 8, amplitude = 0.08f))
+                    .background(contentColor.copy(alpha = 0.16f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -444,12 +642,12 @@ fun UrlScanScreen(
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         Text(
-            "Verdächtige Web-Adressen scannen",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold
+            "Scan suspicious web addresses",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Black
         )
         Text(
-            "Gib eine beliebige Webadresse ein. Diese wird in einen sicheren SHA-256 Hash konvertiert und über die VirusTotal-Schnittstelle analysiert.",
+            "Enter any web address. VirusTotal checks it against 90+ URL/domain blocklists and security engines, then returns a full verdict.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -457,15 +655,15 @@ fun UrlScanScreen(
         OutlinedTextField(
             value = urlText,
             onValueChange = { urlText = it },
-            label = { Text("URL eingeben (z.B. google.com)") },
-            placeholder = { Text("https://example.com/malicious-file") },
+            label = { Text("Enter a URL (e.g. google.com)") },
+            placeholder = { Text("https://example.com/suspicious-file") },
             modifier = Modifier.fillMaxWidth(),
             shape = MaterialTheme.shapes.large,
             singleLine = true,
             trailingIcon = {
                 if (urlText.isNotEmpty()) {
                     IconButton(onClick = { urlText = "" }) {
-                        Icon(Icons.Default.Clear, "Leeren")
+                        Icon(Icons.Default.Clear, "Clear")
                     }
                 }
             }
@@ -473,15 +671,19 @@ fun UrlScanScreen(
 
         // Clipboard Helper Card
         if (!clipboardUrl.isNullOrBlank()) {
+            val clipInteraction = remember { MutableInteractionSource() }
+            val clipScale = pressScale(clipInteraction)
             Card(
+                onClick = {
+                    triggerHaptic(view, HapticType.CLICK)
+                    urlText = clipboardUrl
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable {
-                        triggerHaptic(view, HapticType.CLICK)
-                        urlText = clipboardUrl
-                    },
+                    .scaleOnPress(clipScale),
                 shape = MaterialTheme.shapes.large,
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f))
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                interactionSource = clipInteraction
             ) {
                 Row(
                     modifier = Modifier.padding(16.dp),
@@ -495,7 +697,7 @@ fun UrlScanScreen(
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "Aus Zwischenablage einfügen",
+                            "Paste from clipboard",
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.labelMedium
                         )
@@ -512,25 +714,13 @@ fun UrlScanScreen(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        Button(
-            onClick = {
-                triggerHaptic(view, HapticType.CLICK)
-                onScan(urlText)
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(64.dp),
+        GradientButton(
+            text = "Analyze link 🚀",
+            icon = Icons.AutoMirrored.Filled.Send,
             enabled = urlText.isNotBlank() && apiKeySaved,
-            shape = MaterialTheme.shapes.large,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
-            )
-        ) {
-            Icon(Icons.Default.Send, contentDescription = null)
-            Spacer(modifier = Modifier.width(12.dp))
-            Text("Link analysieren 🚀", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        }
+            onClick = { onScan(urlText) },
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 
@@ -553,7 +743,7 @@ fun CustomFileScanScreen(
         if (uri != null) {
             triggerHaptic(view, HapticType.CLICK)
             selectedFileUri = uri
-            selectedFileName = getFileName(context, uri) ?: "Ausgewählte Datei"
+            selectedFileName = getFileName(context, uri) ?: "Selected file"
         }
     }
 
@@ -564,33 +754,37 @@ fun CustomFileScanScreen(
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         Text(
-            "Lokale Datei überprüfen",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold
+            "Check a local file",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Black
         )
         Text(
-            "Wähle ein Dokument, Bild, PDF oder ein APK-Archiv aus. Die Datei wird zunächst gehasht. Existiert bereits ein Testergebnis, wird dieses sofort geladen.",
+            "Pick a document, image, PDF or APK. The file is hashed first — if a report already exists it loads instantly, otherwise it's uploaded and analyzed live.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
         // Satisfying Drag & Drop Styled Select Card
+        val pickerInteraction = remember { MutableInteractionSource() }
+        val pickerScale = pressScale(pickerInteraction, scaleDown = 0.98f)
         Card(
+            onClick = {
+                triggerHaptic(view, HapticType.CLICK)
+                filePickerLauncher.launch("*/*")
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .clickable {
-                    triggerHaptic(view, HapticType.CLICK)
-                    filePickerLauncher.launch("*/*")
-                },
+                .scaleOnPress(pickerScale),
             shape = MaterialTheme.shapes.extraLarge,
             colors = CardDefaults.cardColors(
                 containerColor = if (selectedFileUri != null) {
-                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                    MaterialTheme.colorScheme.primaryContainer
                 } else {
-                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    MaterialTheme.colorScheme.surfaceContainerHighest
                 }
-            )
+            ),
+            interactionSource = pickerInteraction
         ) {
             Box(
                 modifier = Modifier
@@ -622,7 +816,7 @@ fun CustomFileScanScreen(
 
                     if (selectedFileUri != null) {
                         Text(
-                            "Ausgewähltes File:",
+                            "Selected file:",
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,
                             style = MaterialTheme.typography.labelLarge
@@ -636,20 +830,20 @@ fun CustomFileScanScreen(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            "Tippe hier, um eine andere Datei zu wählen",
+                            "Tap to choose a different file",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     } else {
                         Text(
-                            "Tippe hier, um eine Datei auszuwählen 🔍",
+                            "Tap to select a file 🔍",
                             fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            "Alle Dateiformate werden unterstützt",
+                            "All file formats are supported",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                         )
@@ -658,27 +852,13 @@ fun CustomFileScanScreen(
             }
         }
 
-        Button(
-            onClick = {
-                selectedFileUri?.let { uri ->
-                    triggerHaptic(view, HapticType.CLICK)
-                    onFileSelected(uri)
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(64.dp),
+        GradientButton(
+            text = "Start security check",
+            icon = Icons.Default.Shield,
             enabled = selectedFileUri != null && apiKeySaved,
-            shape = MaterialTheme.shapes.large,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.secondary,
-                contentColor = MaterialTheme.colorScheme.onSecondary
-            )
-        ) {
-            Icon(Icons.Default.Done, contentDescription = null)
-            Spacer(modifier = Modifier.width(12.dp))
-            Text("Sicherheits-Check starten", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        }
+            onClick = { selectedFileUri?.let { onFileSelected(it) } },
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 
@@ -732,15 +912,15 @@ fun InstalledAppsScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text(
-            "Installierte Apps auf Viren scannen",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold
+            "Scan installed apps for malware",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Black
         )
 
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("App suchen...") },
+            placeholder = { Text("Search apps…") },
             modifier = Modifier.fillMaxWidth(),
             shape = MaterialTheme.shapes.large,
             leadingIcon = { Icon(Icons.Default.Search, null) },
@@ -767,7 +947,7 @@ fun InstalledAppsScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            "Keine Apps gefunden.",
+                            "No apps found.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -775,17 +955,22 @@ fun InstalledAppsScreen(
                 }
             } else {
                 items(filteredApps) { app ->
+                    val appInteraction = remember { MutableInteractionSource() }
+                    val appScale = pressScale(appInteraction)
                     Card(
+                        onClick = {
+                            triggerHaptic(view, HapticType.CLICK)
+                            onAppSelected(app)
+                        },
+                        enabled = apiKeySaved,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable(enabled = apiKeySaved) {
-                                triggerHaptic(view, HapticType.CLICK)
-                                onAppSelected(app)
-                            },
+                            .scaleOnPress(appScale),
                         shape = MaterialTheme.shapes.large,
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                        )
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                        ),
+                        interactionSource = appInteraction
                     ) {
                         Row(
                             modifier = Modifier
@@ -821,7 +1006,7 @@ fun InstalledAppsScreen(
                             ) {
                                 Icon(
                                     Icons.Default.PlayArrow,
-                                    contentDescription = "Scannen",
+                                    contentDescription = "Scan",
                                     tint = if (apiKeySaved) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                                     modifier = Modifier.size(20.dp)
                                 )
@@ -829,6 +1014,171 @@ fun InstalledAppsScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+// ====================================================================================
+// SUB-SCREEN: SAVED SCANS
+// ====================================================================================
+@Composable
+fun SavedScansScreen(
+    savedScans: List<SavedScan>,
+    apiKeySaved: Boolean,
+    onOpenSavedScan: (SavedScan) -> Unit,
+    onDeleteSavedScan: (SavedScan) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 24.dp)
+            .padding(top = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text(
+            "Your saved scans",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Black
+        )
+        Text(
+            text = if (apiKeySaved) {
+                "Reopen any scan to automatically refresh it with the latest VirusTotal results."
+            } else {
+                "Add an API key to refresh on reopen — saved results still open from cache."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        if (savedScans.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(76.dp)
+                            .clip(CookieShape(scallops = 10, amplitude = 0.07f))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Bookmarks,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    }
+                    Text("No saved scans yet", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Open a result and tap the bookmark icon to save it here.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(bottom = 24.dp)
+            ) {
+                items(savedScans, key = { it.id }) { saved ->
+                    SavedScanCard(
+                        saved = saved,
+                        onOpen = { onOpenSavedScan(saved) },
+                        onDelete = { onDeleteSavedScan(saved) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SavedScanCard(
+    saved: SavedScan,
+    onOpen: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val view = LocalView.current
+    val e = MaterialTheme.expressive
+    val stats = saved.report.data.attributes.lastAnalysisStats
+    val flagged = stats.malicious + stats.suspicious
+
+    val (accent, icon) = when {
+        stats.malicious > 0 -> e.danger to Icons.Default.GppBad
+        stats.suspicious > 0 -> e.warning to Icons.Default.GppMaybe
+        stats.total > 0 -> e.safe to Icons.Default.GppGood
+        else -> MaterialTheme.colorScheme.outline to Icons.Default.Shield
+    }
+    val verdictText = if (flagged > 0) "$flagged/${stats.total} detections" else "Clean"
+
+    val interaction = remember { MutableInteractionSource() }
+    val scale = pressScale(interaction)
+    Card(
+        onClick = {
+            triggerHaptic(view, HapticType.CLICK)
+            onOpen()
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .scaleOnPress(scale),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        ),
+        interactionSource = interaction
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(CookieShape(scallops = 8, amplitude = 0.08f))
+                    .background(accent.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(24.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    saved.label,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "$verdictText · ${formatEpochSeconds(saved.savedAt / 1000)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (flagged > 0) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(onClick = {
+                triggerHaptic(view, HapticType.CLICK)
+                onDelete()
+            }) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Delete saved scan",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -856,9 +1206,9 @@ fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         Text(
-            "Konfiguration",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold
+            "Configuration",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Black
         )
 
         // API Key Status Card
@@ -885,12 +1235,12 @@ fun SettingsScreen(
                 )
                 Column {
                     Text(
-                        if (apiKeySaved) "API-Key eingerichtet ✅" else "API-Key fehlt ❌",
+                        if (apiKeySaved) "API key configured ✅" else "API key missing ❌",
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.labelLarge
                     )
                     Text(
-                        if (apiKeySaved) "Deine Scan-Anfragen werden autorisiert." else "Ohne Key können keine Scans vorgenommen werden.",
+                        if (apiKeySaved) "Your scan requests are authorized." else "No scans can run without a key.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -900,8 +1250,8 @@ fun SettingsScreen(
         OutlinedTextField(
             value = keyInput,
             onValueChange = { keyInput = it },
-            label = { Text("Neuen VirusTotal API-Key eintragen") },
-            placeholder = { Text("Füge deinen Key hier ein...") },
+            label = { Text("Enter a new VirusTotal API key") },
+            placeholder = { Text("Paste your key here…") },
             modifier = Modifier.fillMaxWidth(),
             shape = MaterialTheme.shapes.large,
             singleLine = true,
@@ -910,35 +1260,30 @@ fun SettingsScreen(
                 IconButton(onClick = { keyVisible = !keyVisible }) {
                     Icon(
                         if (keyVisible) Icons.Default.Lock else Icons.Default.Settings,
-                        contentDescription = if (keyVisible) "Ausblenden" else "Einblenden"
+                        contentDescription = if (keyVisible) "Hide" else "Show"
                     )
                 }
             }
         )
 
-        Button(
+        GradientButton(
+            text = "Save API key",
+            icon = Icons.Default.Done,
+            enabled = keyInput.isNotBlank(),
             onClick = {
                 if (keyInput.isNotBlank()) {
                     onSaveApiKey(keyInput.trim())
                     keyInput = ""
                 }
             },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp),
-            enabled = keyInput.isNotBlank(),
-            shape = MaterialTheme.shapes.large
-        ) {
-            Icon(Icons.Default.Done, contentDescription = null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("API-Key speichern", fontWeight = FontWeight.Bold)
-        }
+            modifier = Modifier.fillMaxWidth()
+        )
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // FAQ / Anleitung
+        // FAQ / Instructions
         Text(
-            "Anleitung zum Abrufen des Keys 💡",
+            "How to get your key 💡",
             fontWeight = FontWeight.Bold,
             style = MaterialTheme.typography.titleMedium
         )
@@ -953,19 +1298,19 @@ fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    "1. Registriere dich kostenlos auf www.virustotal.com",
+                    "1. Sign up for free at www.virustotal.com",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    "2. Klicke oben rechts auf dein Profil und wähle 'API Key'.",
+                    "2. Open your profile (top right) and select 'API Key'.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    "3. Kopiere den dort angezeigten String und füge ihn oben ein.",
+                    "3. Copy the string shown there and paste it above.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    "Hinweis: Der kostenlose Key erlaubt standardmäßig bis zu 4 Suchen pro Minute.",
+                    "Note: the free key allows up to 4 lookups per minute by default.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

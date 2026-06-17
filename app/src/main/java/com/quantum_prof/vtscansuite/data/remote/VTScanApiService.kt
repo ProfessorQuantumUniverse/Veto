@@ -5,6 +5,7 @@ import com.quantum_prof.vtscansuite.data.model.AnalysisResponse
 import com.quantum_prof.vtscansuite.data.model.FileReportResponse
 import com.quantum_prof.vtscansuite.data.model.FileUploadResponse
 import com.quantum_prof.vtscansuite.data.model.UploadUrlResponse
+import com.quantum_prof.vtscansuite.data.model.UrlSubmitResponse
 import okhttp3.MultipartBody
 import retrofit2.Response
 import retrofit2.http.*
@@ -15,6 +16,20 @@ interface VTScanApiService {
     suspend fun getFileReport(
         @Header("x-apikey") apiKey: String,
         @Path("id") fileHash: String
+    ): Response<FileReportResponse>
+
+    // ---- URL-Analyse ----
+    @FormUrlEncoded
+    @POST("urls")
+    suspend fun submitUrl(
+        @Header("x-apikey") apiKey: String,
+        @Field("url") url: String
+    ): Response<UrlSubmitResponse>
+
+    @GET("urls/{id}")
+    suspend fun getUrlReport(
+        @Header("x-apikey") apiKey: String,
+        @Path("id") urlId: String
     ): Response<FileReportResponse>
 
     @Multipart

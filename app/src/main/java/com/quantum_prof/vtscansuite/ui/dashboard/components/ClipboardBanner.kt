@@ -54,7 +54,7 @@ fun ClipboardBanner(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "URL in Zwischenablage gefunden",
+                        "URL found in clipboard",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                         fontWeight = FontWeight.Bold
@@ -83,7 +83,7 @@ fun ClipboardBanner(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Scannen")
+                    Text("Scan")
                 }
             }
         }

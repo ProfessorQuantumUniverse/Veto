@@ -1,9 +1,12 @@
 // app/src/main/java/com/quantum_prof/vtscansuite/data/repository/VirusTotalRepositoryImpl.kt
 package com.quantum_prof.vtscansuite.data.repository
 
-import com.quantum_prof.vtscansuite.data.model.AnalysisResponse
+import android.util.Base64
 import com.quantum_prof.vtscansuite.data.model.FileReportResponse
+import com.quantum_prof.vtscansuite.data.remote.ProgressRequestBody
 import com.quantum_prof.vtscansuite.data.remote.VTScanApiService
+import com.quantum_prof.vtscansuite.domain.repository.ProgressCallback
+import com.quantum_prof.vtscansuite.domain.repository.ScanPhase
 import com.quantum_prof.vtscansuite.domain.repository.VirusTotalRepository
 import kotlinx.coroutines.delay
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -18,6 +21,10 @@ class VirusTotalRepositoryImpl @Inject constructor(
 ) : VirusTotalRepository {
 
     private val sizeLimit32MB = 32 * 1024 * 1024 // 32 Megabytes
+    private val pollIntervalMs = 15_000L            // ~4/min, respektiert das Free-Tier-Limit
+    private val analysisTimeoutMs = 6 * 60_000L     // bis zu 6 Minuten auf den Abschluss warten
+    private val populateRetries = 10                // danach den Report nachladen, bis Ergebnisse da sind
+    private val populateIntervalMs = 6_000L
 
     override suspend fun getFileReport(apiKey: String, hash: String): Result<FileReportResponse> {
         return try {
@@ -32,12 +39,33 @@ class VirusTotalRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun uploadFile(apiKey: String, file: File): Result<FileReportResponse> {
+    override suspend fun getReport(apiKey: String, id: String, isUrl: Boolean): Result<FileReportResponse> {
+        return try {
+            val response = if (isUrl) api.getUrlReport(apiKey, id) else api.getFileReport(apiKey, id)
+            if (response.isSuccessful && response.body() != null) {
+                Result.success(response.body()!!)
+            } else {
+                Result.failure(Exception("API Error Code: ${response.code()}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun uploadFile(
+        apiKey: String,
+        file: File,
+        onProgress: ProgressCallback
+    ): Result<FileReportResponse> {
         return try {
             val fileHash = calculateSha256(file)
 
-            val requestFile = file.asRequestBody("application/octet-stream".toMediaTypeOrNull())
-            val body = MultipartBody.Part.createFormData("file", file.name, requestFile)
+            onProgress(ScanPhase.UPLOADING, 0f)
+            val rawBody = file.asRequestBody("application/octet-stream".toMediaTypeOrNull())
+            val progressBody = ProgressRequestBody(rawBody) { fraction ->
+                onProgress(ScanPhase.UPLOADING, fraction)
+            }
+            val body = MultipartBody.Part.createFormData("file", file.name, progressBody)
 
             // 1. Datei hochladen
             val uploadResponse = if (file.length() <= sizeLimit32MB) {
@@ -45,7 +73,7 @@ class VirusTotalRepositoryImpl @Inject constructor(
             } else {
                 val urlResponse = api.getUploadUrl(apiKey)
                 if (!urlResponse.isSuccessful || urlResponse.body() == null) {
-                    return Result.failure(Exception("Upload-URL konnte nicht bezogen werden: Code ${urlResponse.code()}"))
+                    return Result.failure(Exception("Could not obtain an upload URL (code ${urlResponse.code()})"))
                 }
                 val uploadUrl = urlResponse.body()!!.data
                 api.uploadFileToUrl(uploadUrl, apiKey, body)
@@ -54,32 +82,120 @@ class VirusTotalRepositoryImpl @Inject constructor(
             if (uploadResponse.isSuccessful && uploadResponse.body() != null) {
                 val analysisId = uploadResponse.body()!!.data.id
 
-                // 2. Polling-Schleife: Warte, bis die Analyse fertiggestellt ist
-                var isCompleted = false
-                var attempts = 0
-                val maxAttempts = 15 // Maximal 75 Sekunden warten (15 * 5s)
+                // 2. Warten, bis die Analyse abgeschlossen ist
+                awaitAnalysisCompletion(apiKey, analysisId, onProgress)
 
-                while (!isCompleted && attempts < maxAttempts) {
-                    delay(5000) // 5 Sekunden Pause zwischen den Anfragen
-                    attempts++
-
-                    val analysisResult = api.getAnalysisReport(apiKey, analysisId)
-                    if (analysisResult.isSuccessful && analysisResult.body() != null) {
-                        val status = analysisResult.body()!!.data.attributes.status
-                        if (status == "completed") {
-                            isCompleted = true
-                        }
-                    }
-                }
-
-                // 3. Finalen Report via Hash abfragen, da die Datei nun analysiert wurde
-                getFileReport(apiKey, fileHash)
+                // 3. Datei-Report nachladen, bis die Engine-Ergebnisse tatsächlich vorhanden sind
+                onProgress(ScanPhase.FETCHING, null)
+                fetchPopulatedReport(apiKey, fileHash, isUrl = false, onProgress)
             } else {
-                Result.failure(Exception("Upload-Fehler: Code ${uploadResponse.code()}"))
+                Result.failure(Exception("Upload error (code ${uploadResponse.code()})"))
             }
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    override suspend fun scanUrl(
+        apiKey: String,
+        url: String,
+        onProgress: ProgressCallback
+    ): Result<FileReportResponse> {
+        return try {
+            val normalized = normalizeUrl(url)
+            val precomputedId = vtUrlId(normalized)
+
+            // 1. Schnellpfad: bereits bekannte (und analysierte) URL direkt abrufen
+            onProgress(ScanPhase.CHECKING, null)
+            val cached = runCatching { api.getUrlReport(apiKey, precomputedId) }.getOrNull()
+            if (cached?.isSuccessful == true && cached.body().isPopulated()) {
+                return Result.success(cached.body()!!)
+            }
+
+            // 2. URL zur Analyse einreichen
+            onProgress(ScanPhase.SUBMITTING, null)
+            val submit = api.submitUrl(apiKey, normalized)
+            if (!submit.isSuccessful || submit.body() == null) {
+                return Result.failure(Exception("Could not submit the URL (code ${submit.code()})"))
+            }
+            val analysisId = submit.body()!!.data.id
+
+            // 3. Auf Abschluss warten und zuverlässige url_id einsammeln
+            val urlInfoId = awaitAnalysisCompletion(apiKey, analysisId, onProgress)
+
+            // 4. Endgültigen URL-Bericht nachladen, bis die Engine-Ergebnisse vorhanden sind
+            onProgress(ScanPhase.FETCHING, null)
+            val finalId = urlInfoId ?: precomputedId
+            fetchPopulatedReport(apiKey, finalId, isUrl = true, onProgress)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Pollt /analyses/{id} bis der Status "completed" ist (oder das Zeitlimit erreicht ist).
+     * Rate-Limit-Antworten (429) verbrauchen kein Zeitbudget unnötig – es wird einfach weiter gewartet.
+     * Liefert (falls vorhanden) die url_info.id aus der Analyse-Antwort zurück.
+     */
+    private suspend fun awaitAnalysisCompletion(
+        apiKey: String,
+        analysisId: String,
+        onProgress: ProgressCallback
+    ): String? {
+        val deadline = System.currentTimeMillis() + analysisTimeoutMs
+        var urlInfoId: String? = null
+        while (System.currentTimeMillis() < deadline) {
+            onProgress(ScanPhase.ANALYZING, null)
+            delay(pollIntervalMs)
+            val response = runCatching { api.getAnalysisReport(apiKey, analysisId) }.getOrNull()
+            if (response != null) {
+                if (response.code() == 429) continue // Rate-Limit: einfach weiter warten
+                val body = response.body()
+                if (response.isSuccessful && body != null) {
+                    urlInfoId = body.meta?.urlInfo?.id ?: urlInfoId
+                    if (body.data.attributes.status == "completed") {
+                        return urlInfoId
+                    }
+                }
+            }
+        }
+        return urlInfoId
+    }
+
+    /**
+     * Lädt den Report (Datei oder URL) wiederholt nach, bis Engine-Ergebnisse vorhanden sind.
+     * Nötig, weil das Objekt direkt nach Abschluss der Analyse noch leer sein kann
+     * (sonst landet man fälschlich im "Kein Urteil"-Zustand). Sind nach allen Versuchen
+     * keine Ergebnisse da, wird ein eindeutiger Fehler statt eines leeren Berichts geliefert.
+     */
+    private suspend fun fetchPopulatedReport(
+        apiKey: String,
+        id: String,
+        isUrl: Boolean,
+        onProgress: ProgressCallback
+    ): Result<FileReportResponse> {
+        var last = getReport(apiKey, id, isUrl)
+        var tries = 0
+        while (tries < populateRetries) {
+            if (last.getOrNull().isPopulated()) return last
+            onProgress(ScanPhase.ANALYZING, null) // VirusTotal stellt das Ergebnis noch fertig
+            delay(populateIntervalMs)
+            tries++
+            last = getReport(apiKey, id, isUrl)
+        }
+        return if (last.getOrNull().isPopulated()) {
+            last
+        } else if (last.isSuccess) {
+            Result.failure(Exception("VirusTotal is still analyzing this item. Please try again in a minute."))
+        } else {
+            last
+        }
+    }
+
+    /** Ein Bericht gilt als befüllt, sobald Engine-Ergebnisse vorliegen. */
+    private fun FileReportResponse?.isPopulated(): Boolean {
+        val attrs = this?.data?.attributes ?: return false
+        return attrs.lastAnalysisResults.isNotEmpty() || attrs.lastAnalysisStats.total > 0
     }
 
     private fun calculateSha256(file: File): String {
@@ -94,4 +210,18 @@ class VirusTotalRepositoryImpl @Inject constructor(
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
+
+    /** Ergänzt ein Schema, falls keines vorhanden ist (VirusTotal erwartet eine vollständige URL). */
+    private fun normalizeUrl(url: String): String {
+        val trimmed = url.trim()
+        return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed
+        else "http://$trimmed"
+    }
+
+    /** VirusTotal URL-Identifier: base64(url) url-safe, ohne Padding. */
+    private fun vtUrlId(url: String): String =
+        Base64.encodeToString(
+            url.toByteArray(Charsets.UTF_8),
+            Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
+        )
 }
