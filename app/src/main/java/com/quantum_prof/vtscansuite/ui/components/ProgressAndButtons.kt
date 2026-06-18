@@ -57,7 +57,7 @@ fun ExpressiveProgressBar(
     progress: Float?,
     modifier: Modifier = Modifier,
     brush: Brush = auroraBrush(),
-    trackColor: Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+    trackColor: Color = MaterialTheme.colorScheme.surfaceContainerHighest,
     height: androidx.compose.ui.unit.Dp = 12.dp
 ) {
     BoxWithConstraints(
@@ -68,9 +68,13 @@ fun ExpressiveProgressBar(
             .background(trackColor)
     ) {
         if (progress != null) {
+            // Sanftes, gleichmäßiges Nachführen ohne Federn/Überschwingen
             val animated by animateFloatAsState(
                 targetValue = progress.coerceIn(0f, 1f),
-                animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessLow),
+                animationSpec = androidx.compose.animation.core.tween(
+                    durationMillis = 320,
+                    easing = FastOutSlowInEasing
+                ),
                 label = "progress"
             )
             Box(

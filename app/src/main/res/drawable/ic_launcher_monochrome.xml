@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Flat shield + checkmark cut-out for themed (monochrome) icons -->
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+        android:pathData="M54,22.5 L74,30 Q77,31 77,34 L77,53 C77,68 67,79 54,85 C41,79 31,68 31,53 L31,34 Q31,31 34,30 Z M47.9,59.4 L40,51.4 L37.3,54.1 L47.9,64.7 L70.7,41.9 L68,39.3 Z" />
+</vector>

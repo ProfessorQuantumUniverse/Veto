@@ -3,6 +3,7 @@ package com.quantum_prof.vtscansuite.ui.results
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -11,8 +12,6 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -173,6 +172,9 @@ fun ResultsScreen(
     val stats = attr.lastAnalysisStats
     val e = MaterialTheme.expressive
 
+    // Systemzurück -> zurück zum Dashboard (statt die App zu schließen)
+    BackHandler { onBackClick() }
+
     val verdict = when {
         stats.malicious > 0 -> Verdict.MALICIOUS
         stats.suspicious > 0 -> Verdict.SUSPICIOUS
@@ -200,10 +202,6 @@ fun ResultsScreen(
     val detectionCount = remember(sortedEngines) {
         sortedEngines.count { it.category == "malicious" || it.category == "suspicious" }
     }
-
-    // Sanfte Seiten-Einblendung
-    var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { visible = true }
 
     androidx.compose.material3.Scaffold(
         topBar = {
@@ -241,20 +239,13 @@ fun ResultsScreen(
             )
         }
     ) { innerPadding ->
-        androidx.compose.animation.AnimatedVisibility(
-            visible = visible,
-            enter = fadeIn(tween(400)) + slideInVertically(
-                animationSpec = tween(450),
-                initialOffsetY = { it / 8 }
-            )
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
                 val heroTagline = attr.popularThreatClassification?.suggestedThreatLabel
                     ?: if (stats.total > 0) "${stats.total} engines analyzed" else null
                 item { VerdictHero(verdict, style, stats.malicious, stats.suspicious, stats.total, heroTagline) }
@@ -340,7 +331,6 @@ fun ResultsScreen(
 
                 item { Spacer(Modifier.height(8.dp)) }
             }
-        }
     }
 }
 

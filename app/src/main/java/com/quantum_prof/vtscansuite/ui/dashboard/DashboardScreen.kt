@@ -4,6 +4,7 @@ package com.quantum_prof.vtscansuite.ui.dashboard
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -30,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -38,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -56,13 +59,16 @@ import com.quantum_prof.vtscansuite.domain.repository.ScanPhase
 import com.quantum_prof.vtscansuite.domain.usecase.InstalledApp
 import com.quantum_prof.vtscansuite.ui.components.ExpressiveProgressBar
 import com.quantum_prof.vtscansuite.ui.components.GradientButton
+import com.quantum_prof.vtscansuite.ui.components.StaggeredReveal
 import com.quantum_prof.vtscansuite.ui.dashboard.components.ClipboardBanner
 import com.quantum_prof.vtscansuite.ui.theme.CookieShape
 import com.quantum_prof.vtscansuite.ui.theme.auroraBrush
 import com.quantum_prof.vtscansuite.ui.theme.expressive
 import com.quantum_prof.vtscansuite.ui.theme.fadeThrough
 import com.quantum_prof.vtscansuite.ui.util.HapticType
+import com.quantum_prof.vtscansuite.ui.util.VT_API_KEY_URL
 import com.quantum_prof.vtscansuite.ui.util.formatEpochSeconds
+import com.quantum_prof.vtscansuite.ui.util.openUrl
 import com.quantum_prof.vtscansuite.ui.util.pressScale
 import com.quantum_prof.vtscansuite.ui.util.scaleOnPress
 import com.quantum_prof.vtscansuite.ui.util.triggerHaptic
@@ -97,6 +103,12 @@ fun DashboardScreen(
     val view = LocalView.current
     val context = LocalContext.current
     var currentScreen by remember { mutableStateOf(DashboardSubScreen.Home) }
+
+    // Systemzurück auf einem Unterbildschirm -> zurück zur Startseite (App nicht schließen)
+    BackHandler(enabled = currentScreen != DashboardSubScreen.Home) {
+        triggerHaptic(view, HapticType.CLICK)
+        currentScreen = DashboardSubScreen.Home
+    }
 
     // Steuert, ob das Vollbild-Overlay angezeigt oder der Scan im Hintergrund läuft
     var backgrounded by remember { mutableStateOf(false) }
@@ -480,7 +492,7 @@ fun HomeScreen(
                     }
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            text = if (apiKeySaved) "Ready to scan ✨" else "API key required 🔑",
+                            text = if (apiKeySaved) "Ready to scan" else "API key required",
                             color = onGradient,
                             fontWeight = FontWeight.Black,
                             fontSize = 24.sp
@@ -903,6 +915,8 @@ fun InstalledAppsScreen(
                     it.packageName.contains(searchQuery, ignoreCase = true)
         }
     }
+    // Merkt sich, welche Listen-Elemente bereits eingeblendet wurden (kein Re-Animieren beim Scrollen)
+    val revealed = remember { mutableStateMapOf<String, Boolean>() }
 
     Column(
         modifier = Modifier
@@ -921,7 +935,9 @@ fun InstalledAppsScreen(
             value = searchQuery,
             onValueChange = { searchQuery = it },
             placeholder = { Text("Search apps…") },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .onFocusChanged { if (it.isFocused) triggerHaptic(view, HapticType.CLICK) },
             shape = MaterialTheme.shapes.large,
             leadingIcon = { Icon(Icons.Default.Search, null) },
             trailingIcon = {
@@ -954,7 +970,11 @@ fun InstalledAppsScreen(
                     }
                 }
             } else {
-                items(filteredApps) { app ->
+                items(filteredApps, key = { it.packageName }) { app ->
+                  StaggeredReveal(
+                      alreadyRevealed = revealed[app.packageName] == true,
+                      onRevealed = { revealed[app.packageName] = true }
+                  ) {
                     val appInteraction = remember { MutableInteractionSource() }
                     val appScale = pressScale(appInteraction)
                     Card(
@@ -1013,6 +1033,7 @@ fun InstalledAppsScreen(
                             }
                         }
                     }
+                  }
                 }
             }
         }
@@ -1193,6 +1214,7 @@ fun SettingsScreen(
     onSaveApiKey: (String) -> Unit
 ) {
     val view = LocalView.current
+    val context = LocalContext.current
     var keyInput by remember { mutableStateOf("") }
     var keyVisible by remember { mutableStateOf(false) }
 
@@ -1298,15 +1320,7 @@ fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    "1. Sign up for free at www.virustotal.com",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Text(
-                    "2. Open your profile (top right) and select 'API Key'.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Text(
-                    "3. Copy the string shown there and paste it above.",
+                    "Create a free VirusTotal account, then open your profile menu (top-right) and choose “API key”. Copy the key shown there and paste it above.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
@@ -1314,6 +1328,22 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                FilledTonalButton(
+                    onClick = {
+                        triggerHaptic(view, HapticType.CLICK)
+                        openUrl(context, VT_API_KEY_URL)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.OpenInNew,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Get your API key", fontWeight = FontWeight.Bold)
+                }
             }
         }
     }

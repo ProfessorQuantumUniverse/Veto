@@ -50,6 +50,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalView
@@ -429,4 +430,34 @@ fun GradientDivider(brush: Brush, modifier: Modifier = Modifier) {
             .clip(RoundedCornerShape(50))
             .background(brush)
     )
+}
+
+// ============================================================================
+//  STAGGERED REVEAL – dezente Einblend-/Hoch-Animation für Listen-Elemente.
+//  Nutzt nur graphicsLayer (alpha/translationY) und animiert pro Element genau
+//  einmal (über ein ausgelagertes "bereits gezeigt"-Flag), damit beim Scrollen
+//  nichts ruckelt oder erneut animiert.
+// ============================================================================
+@Composable
+fun StaggeredReveal(
+    alreadyRevealed: Boolean,
+    onRevealed: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    val progress = remember { Animatable(if (alreadyRevealed) 1f else 0f) }
+    LaunchedEffect(Unit) {
+        if (progress.value < 1f) {
+            progress.animateTo(1f, tween(durationMillis = 300, easing = FastOutSlowInEasing))
+            onRevealed()
+        }
+    }
+    Box(
+        modifier = modifier.graphicsLayer {
+            alpha = progress.value
+            translationY = (1f - progress.value) * 36f
+        }
+    ) {
+        content()
+    }
 }
