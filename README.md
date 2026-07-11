@@ -4,9 +4,9 @@
 
 # Veto
 
-### A sleek, open source VirusTotal client for Android
+### An open source VirusTotal client for Android
 
-Free and open source. Bring your own VirusTotal API key and scan files, links and installed apps against more than 70 engines, wrapped in a clean Material 3 interface. No accounts, no tracking, no ads.
+Free and open source. Bring your own VirusTotal API key to scan files, links, and installed applications against over 70 engines, built with a Material 3 interface. No accounts, no tracking, no ads.
 
 [![Platform](https://img.shields.io/badge/Platform-Android-3DDC84?style=flat-square&logo=android&logoColor=white)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-100%25-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org)
@@ -17,68 +17,103 @@ Free and open source. Bring your own VirusTotal API key and scan files, links an
 
 ## What is Veto?
 
-Veto is a sleek, open source Android client for VirusTotal. Submit a file, a link, or one of your installed apps, watch the analysis happen in real time, and read a clear report that goes from a single verdict all the way down to every field the service returns.
+Veto is an Android client for VirusTotal. Submit a file, a link, or an installed application to view real-time analysis results. The application displays a clear report ranging from a single unified verdict to the complete set of fields returned by the service.
 
-It is free and open source, with no accounts of its own, no tracking, and no advertising. You bring your own free VirusTotal API key, so scans run under your own account and nothing is routed through a third party.
+The project is free and open source, containing no user accounts, tracking systems, or advertising. Because users supply their own VirusTotal API key, all scans run directly under their personal account without being routed through intermediate third-party servers.
+
+---
 
 ## Screenshots
 
 <div align="center">
 <table>
   <tr>
-    <td><img src="docs/store/screenshots/dashboard.jpg" width="200"/></td>
-    <td><img src="docs/store/screenshots/results-clean.jpg" width="200"/></td>
-    <td><img src="docs/store/screenshots/detailed.jpg" width="200"/></td>
+    <td><img src="docs/store/screenshots/dashboard.jpg" width="200" alt="Dashboard Screen"/></td>
+    <td><img src="docs/store/screenshots/results-clean.jpg" width="200" alt="Clean Results Screen"/></td>
+    <td><img src="docs/store/screenshots/detailed.jpg" width="200" alt="Detailed Report Screen"/></td>
   </tr>
   <tr>
-    <td><img src="docs/store/screenshots/settings.jpg" width="200"/></td>
-    <td><img src="docs/store/screenshots/saved.jpg" width="200"/></td>
+    <td><img src="docs/store/screenshots/settings.jpg" width="200" alt="Settings Screen"/></td>
+    <td><img src="docs/store/screenshots/saved.jpg" width="200" alt="Saved Scans Screen"/></td>
     <td></td>
   </tr>
 </table>
 </div>
 
-## Features
+---
 
-* Scan installed apps, arbitrary files, or any URL
-* Aggregated verdict from more than 70 antivirus engines
-* Quick mode for an at a glance summary, and a Detailed mode for the complete report
-* A short, plain language explanation on every section, which you can switch off in settings
-* Full fidelity reports: hashes, threat classification, history and community votes, sandbox behaviour, YARA matches, Android app internals, and an Additional data section that surfaces everything else the service sends back
-* Real time upload and analysis progress, with scans that keep running in the background
-* Saved reports you can open again later, even offline
-* A clear notice when you reach the VirusTotal rate limit
-* Material 3 design that follows your system colours, in light and dark themes
+## Feature Set
 
-## Architecture
+* **Scan Capability:** Scan installed apps, local files, or target URLs.
+* **Multi-Engine Aggregation:** Combines diagnostics from over 70 antivirus engines.
+* **Dual Reporting Modes:** Quick mode for rapid verification summaries, and Detailed mode for deep inspection.
+* **Contextual Explanations:** Explanatory text is available for every section, with a setting to hide explanations if desired.
+* **High-Fidelity Reports:** Displays file hashes, threat classifications, history, community votes, sandbox behaviors, YARA matches, Android application internals, and all additional API payload fields.
+* **Background Execution:** Real-time upload and analysis progress tracking that persists inside a background service.
+* **Offline Access:** Saves reports locally to allow review at a later time, even without an internet connection.
+* **Rate Limit Warnings:** Displays clear notifications when the local API key reaches its rate limit.
+* **Theming:** Full Material 3 support with dynamic system colors, supporting both light and dark themes.
 
-Veto follows a layered architecture (UI, Domain, Data) with Hilt dependency injection. A single app scoped `ScanManager` is the source of truth for scan state, so the UI stays in sync whether the app is in the foreground, in the background, or destroyed.
+---
 
-**Highlights**
+### Core Architecture Implementation Details
 
-* Resilient polling. `/analyses/{id}` is polled with a six minute wall clock cap (a rate limit response simply keeps waiting), then the report is re fetched until results are populated, returning a clear failure instead of an empty report.
-* Background safe. `ScanState` lives in `ScanManager` and survives Activity destruction. `ScanService` keeps the process alive and posts the ongoing and completion notifications.
-* Full fidelity parsing. The typed model captures the common fields, and the complete raw `attributes` JSON is retained via a custom serializer, so the Detailed report can show literally everything the service returns, including fields the model does not know yet.
+* **State Synchronization:** The application scoped `ScanManager` serves as the centralized source of truth for all scanning states. This ensures that the user interface remains synchronized whether the app is active in the foreground, suspended in the background, or destroyed by the operating system.
+* **Resilient Polling:** The app polls the `/analyses/{id}` endpoint using a six-minute wall clock cap. If a rate limit response is encountered, the process waits rather than failing. The report is re-fetched until the results are populated, returning a structured failure state if the timeout limit is reached.
+* **Process Lifecycle:** While the `ScanState` resides within the `ScanManager` to survive Activity destruction, `ScanService` maintains the process lifecycle during active operations and manages ongoing and completion notifications.
+* **Full Fidelity Parsing:** Common fields are captured using typed models, while the complete raw `attributes` JSON is retained via a custom serializer. This allows the Detailed report view to render all returned fields, including any new fields added to the API payload over time.
 
-## Tech stack
+---
 
-* Language: Kotlin
-* UI: Jetpack Compose, Material 3 with `material-icons-extended`, a custom expressive theming layer
-* Dependency injection: Hilt
-* Networking: Retrofit, OkHttp, `kotlinx.serialization`
-* Async: Kotlin Coroutines
-* Persistence: DataStore for saved scans and settings
-* Min and Target SDK: 30 and 36, JDK 17
+## Tech Stack
 
-## Getting started
+| Layer | Technology | Role in Project |
+| :--- | :--- | :--- |
+| **Language** | Kotlin | Primary programming language |
+| **UI Framework** | Jetpack Compose | Declarative UI structure |
+| **Design System** | Material 3 | Visual styling, dynamic systems coloring, and extended icons |
+| **Dependency Injection** | Hilt | Dependency management |
+| **Networking** | Retrofit & OkHttp | HTTP communication with the VirusTotal API |
+| **Serialization** | `kotlinx.serialization` | Type-safe JSON parsing and custom attribute preservation |
+| **Asynchrony** | Kotlin Coroutines | Asynchronous programming and background processing |
+| **Persistence** | Jetpack DataStore | Dynamic settings storage and saved scan reports |
+| **Compatibility** | SDK 30 to 36 | Compiled with JDK 17, minSdk 30, targetSdk 36 |
 
-Prerequisites
+---
 
-* Android Studio, latest stable
+## Project Structure
+
+```
+└── app/src/main/java/com/quantum_prof/vtscansuite/
+    ├── data/          # Models, remote API, and repository implementation
+    ├── domain/        # Repository interface and business use cases
+    ├── di/            # Hilt dependency injection modules
+    ├── scan/          # ScanManager, ScanService, and system notifications
+    └── ui/            # UI components and presentation layers
+        ├── intro/     # Splash screen and API key configuration
+        ├── dashboard/ # Navigation hub: link, file, and app scanning modules
+        ├── results/   # Quick and Detailed report visualizers
+        ├── components/# Reusable UI elements and layouts
+        ├── theme/     # Color, shapes, typography, and motion configurations
+        └── util/      # Haptic feedback, gestures, and deep linking utilities
+```
+
+* Store listing assets and text resources are available in `fastlane/metadata/android/en-US/`.
+* Editable mockup SVGs are located in `docs/store/svg/`.
+* Mockups can be exported to PNG format using `docs/store/export.html`.
+
+---
+
+## Getting Started
+
+### Prerequisites
+* Android Studio (latest stable version)
 * JDK 17
-* A free VirusTotal API key from https://www.virustotal.com/gui/my-apikey
+* A free VirusTotal API key, which can be acquired at: https://www.virustotal.com/gui/my-apikey
 
-Build and run
+### Build and Run
+
+Clone the repository and compile the debug build using the command line:
 
 ```bash
 git clone https://github.com/ProfessorQuantumUniverse/VTScan.git
@@ -86,32 +121,17 @@ cd VTScan
 ./gradlew :app:assembleDebug
 ```
 
-Or open the project in Android Studio and press Run.
+Alternatively, open the root directory inside Android Studio and select the Run configuration.
 
-On first launch the intro screen asks for your VirusTotal API key. Paste it in and you are ready to scan. The key is stored locally on device. The free key allows up to four lookups per minute.
+On the initial launch, enter your VirusTotal API key in the introduction setup screen. The key is stored locally on your device. Free API keys are typically subject to a limit of four lookups per minute.
 
-## Project structure
+---
 
-```
-app/src/main/java/com/quantum_prof/vtscansuite/
-  data/          models, remote API, repository implementation
-  domain/        repository interface and use cases
-  di/            Hilt modules
-  scan/          ScanManager, ScanService, notifications
-  ui/
-    intro/       animated splash and API key entry
-    dashboard/   home, link, file and app scanners, scanning overlay, settings
-    results/     full report rendering (Quick and Detailed)
-    components/  reusable expressive components
-    theme/       color, shapes, typography, motion
-    util/        haptics, interactions, linking
-```
+## Privacy Policy
 
-Store listing assets live in `fastlane/metadata/android/en-US/` (text) and `docs/store/svg/` (editable mockups). See `docs/store/export.html` to render the mockups to PNG.
+The application communicates exclusively with the VirusTotal API using the credentials you provide. Uploaded files, submitted URLs, and dynamic results are sent directly to VirusTotal's servers. The API key is stored locally on your device. Veto does not collect analytics data and contains no advertising SDKs.
 
-## Privacy
-
-The app talks only to VirusTotal, using the API key you provide. The items you scan and their results are sent to VirusTotal for analysis. Your API key is stored locally on your device. Veto itself collects no analytics and contains no advertising.
+---
 
 ## License
 
@@ -129,6 +149,6 @@ For more details, please see the [LICENSE](LICENSE) file in this repository.
 
 ---
 
+<div align="center">
 Powered by the VirusTotal API. Not affiliated with or endorsed by VirusTotal.
-
 </div>
