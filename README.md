@@ -115,7 +115,7 @@ The app talks only to VirusTotal, using the API key you provide. The items you s
 
 ## License
 
-TODO. A license has not been chosen yet, which means default copyright applies and F-Droid cannot accept the app. Pick a FOSS license (for example GPL 3.0 or MIT) and add a `LICENSE` file at the repository root before publishing.
+
 
 <div align="center">
 
