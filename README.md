@@ -32,10 +32,11 @@ The project is free and open source, containing no user accounts, tracking syste
     <td><img src="docs/store/screenshots/results-clean.jpg" width="200" alt="Clean Results Screen"/></td>
     <td><img src="docs/store/screenshots/detailed.jpg" width="200" alt="Detailed Report Screen"/></td>
   </tr>
+</table>
+<table>
   <tr>
     <td><img src="docs/store/screenshots/settings.jpg" width="200" alt="Settings Screen"/></td>
     <td><img src="docs/store/screenshots/saved.jpg" width="200" alt="Saved Scans Screen"/></td>
-    <td></td>
   </tr>
 </table>
 </div>
