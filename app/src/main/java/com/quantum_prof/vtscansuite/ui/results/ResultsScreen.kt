@@ -24,15 +24,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.AltRoute
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Article
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Bookmark
@@ -41,17 +40,17 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.DataObject
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.Gavel
 import androidx.compose.material.icons.filled.GppBad
 import androidx.compose.material.icons.filled.GppGood
 import androidx.compose.material.icons.filled.GppMaybe
-import androidx.compose.material.icons.filled.Gavel
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.Science
@@ -68,20 +67,25 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -101,8 +105,9 @@ import com.quantum_prof.vtscansuite.data.model.FileReportResponse
 import com.quantum_prof.vtscansuite.data.model.ReportAttributes
 import com.quantum_prof.vtscansuite.ui.components.AnimatedCounter
 import com.quantum_prof.vtscansuite.ui.components.CopyableField
-import com.quantum_prof.vtscansuite.ui.components.GradientButton
 import com.quantum_prof.vtscansuite.ui.components.ExpandableCard
+import com.quantum_prof.vtscansuite.ui.components.GradientButton
+import com.quantum_prof.vtscansuite.ui.components.LocalShowHelp
 import com.quantum_prof.vtscansuite.ui.components.KeyValueRow
 import com.quantum_prof.vtscansuite.ui.components.Pill
 import com.quantum_prof.vtscansuite.ui.components.SectionCard
@@ -118,10 +123,84 @@ import com.quantum_prof.vtscansuite.ui.util.formatEpochSeconds
 import com.quantum_prof.vtscansuite.ui.util.formatFileSize
 import com.quantum_prof.vtscansuite.ui.util.triggerHaptic
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 private enum class Verdict { MALICIOUS, SUSPICIOUS, SAFE, UNKNOWN }
+
+/** Laienverständliche Erklärungen je Abschnitt – erklären auch die einzelnen Unterpunkte. */
+private object Help {
+    const val DETECTION = "How VirusTotal's security engines judged this item.\n" +
+        "• Malicious — the engine believes it is harmful.\n" +
+        "• Suspicious — the engine is unsure but sees warning signs.\n" +
+        "• Harmless — the engine explicitly considers it safe.\n" +
+        "• Undetected — the engine scanned it and found nothing.\n" +
+        "• Unsupported / Timeout / Failure — the engine could not analyse it."
+    const val THREAT = "VirusTotal's aggregated guess at what this threat is, based on the labels many engines assigned.\n" +
+        "• Suggested label — the single most likely name.\n" +
+        "• Categories — the type of threat (trojan, adware, …).\n" +
+        "• Family names — specific malware families and how many engines named each."
+    const val FILE_IDENTITY = "What this file actually is.\n" +
+        "• Name / Other names — filenames it has been seen under.\n" +
+        "• Type & Extension — the detected file format.\n" +
+        "• Size — the file size.\n" +
+        "• Magic — a signature describing the format from its first bytes.\n" +
+        "• TrID — a probability guess of the file type from its content."
+    const val URL = "Details about the scanned link.\n" +
+        "• URL / Final URL — the address you scanned and where it ends up after redirects.\n" +
+        "• Page title & HTTP status — what the server returned.\n" +
+        "• Categories — topic labels vendors assign to the site.\n" +
+        "• Threat names — threats associated with the URL, if any."
+    const val HASHES = "Cryptographic fingerprints of the file — unique IDs you can use to look it up elsewhere or to prove two files are identical. Tap any value to copy it.\n" +
+        "• SHA-256 / SHA-1 / MD5 — standard content hashes (SHA-256 is the strongest).\n" +
+        "• SSDEEP / TLSH — \"fuzzy\" hashes that also match near-identical files.\n" +
+        "• VHASH / Authentihash / Permhash — VirusTotal and signature/permission-based fingerprints."
+    const val HISTORY = "How long VirusTotal has known this item and what the community thinks.\n" +
+        "• First seen / Last submitted / Last analysis — key dates.\n" +
+        "• Times submitted / Unique sources — how often and by how many different submitters.\n" +
+        "• Reputation — a score (negative = bad, positive = trusted).\n" +
+        "• Community votes — harmless vs. malicious votes from VirusTotal users."
+    const val ANDROID = "Static analysis of the Android app via Androguard (without running it).\n" +
+        "• Package / Main activity — the app's ID and entry screen.\n" +
+        "• Version code — the app's internal build number.\n" +
+        "• Min / Target SDK — the Android versions it supports and targets."
+    const val PERMISSIONS = "Android permissions the app requests. Highlighted entries are sensitive — they can access SMS, calls, contacts, location, camera, microphone or storage. Many dangerous permissions on an unknown app is a red flag."
+    const val SANDBOX = "Verdicts from automated sandboxes that actually ran the file in an isolated environment to watch its behaviour.\n" +
+        "• Sandbox name — which analysis system produced the verdict.\n" +
+        "• Category — its overall judgement (e.g. malicious).\n" +
+        "• Malware names / classification — threats the sandbox observed at runtime."
+    const val YARA = "Community-contributed YARA rules that matched this file. Each rule is a pattern describing known malware or noteworthy traits.\n" +
+        "• Rule name & description — what the rule looks for.\n" +
+        "• Ruleset & author — where the rule comes from."
+    const val SIGNATURE = "Digital code-signing details: who signed the file and whether the signature is valid. A trusted, valid signature makes tampering less likely."
+    const val PE = "Internal structure of a Windows executable (PE format): its sections, imported libraries and header fields. Unusual imports or packed sections can hint at malicious behaviour."
+    const val EXIF = "Metadata embedded in the file by the tool that created it — for example author, software, camera model and timestamps."
+    const val ENGINES = "The individual verdict from each security vendor.\n" +
+        "• Detections — engines that flagged this item as malicious or suspicious (with the threat name they used).\n" +
+        "• The rest reported no threat, or could not scan this file type."
+    const val ADDITIONAL = "Every other field VirusTotal returned for this item that doesn't have a dedicated section above — shown exactly as the API delivered it, so nothing is hidden (e.g. packers, Sigma/IDS results, format-specific metadata, capabilities…)."
+}
+
+/**
+ * Top-Level-`attributes`-Schlüssel, die bereits eine eigene Karte oben haben. Alles andere
+ * aus der Roh-JSON landet im Detailed-Modus in „Additional data" – so fehlt garantiert nichts.
+ */
+private val HANDLED_ATTR_KEYS = setOf(
+    "last_analysis_stats", "last_analysis_results",
+    "meaningful_name", "names", "size", "magic",
+    "type_description", "type_extension", "type_tags", "tags", "trid",
+    "md5", "sha1", "sha256", "ssdeep", "tlsh", "vhash", "authentihash", "permhash",
+    "reputation", "total_votes",
+    "first_submission_date", "last_submission_date", "last_analysis_date", "creation_date",
+    "times_submitted", "unique_sources",
+    "popular_threat_classification",
+    "sandbox_verdicts", "crowdsourced_yara_results",
+    "androguard", "signature_info", "pe_info", "exiftool",
+    "url", "final_url", "title", "categories",
+    "last_http_response_code", "last_http_response_content_length",
+    "redirection_chain", "outgoing_links", "threat_names"
+)
 
 private data class VerdictStyle(
     val color: Color,
@@ -164,7 +243,8 @@ fun ResultsScreen(
     report: FileReportResponse,
     isSaved: Boolean,
     onToggleSave: () -> Unit,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    showHelp: Boolean = true
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -172,7 +252,7 @@ fun ResultsScreen(
     val stats = attr.lastAnalysisStats
     val e = MaterialTheme.expressive
 
-    // Systemzurück -> zurück zum Dashboard (statt die App zu schließen)
+    // Systemzurück → zurück zum Dashboard (statt die App zu schließen)
     BackHandler { onBackClick() }
 
     val verdict = when {
@@ -185,6 +265,9 @@ fun ResultsScreen(
     val isUrl = attr.url != null
     val hasHashes = attr.sha256 != null || attr.sha1 != null || attr.md5 != null ||
             attr.ssdeep != null || attr.tlsh != null || attr.vhash != null
+
+    // Anzeigemodus: Quick (Wesentliches) vs. Detailed (ALLE API-Infos). Quick ist der Default.
+    var detailed by rememberSaveable { mutableStateOf(false) }
 
     // Engine-Filter
     var onlyDetections by remember { mutableStateOf(verdict == Verdict.MALICIOUS || verdict == Verdict.SUSPICIOUS) }
@@ -199,8 +282,16 @@ fun ResultsScreen(
         if (onlyDetections) sortedEngines.filter { it.category == "malicious" || it.category == "suspicious" }
         else sortedEngines
     }
-    val detectionCount = remember(sortedEngines) {
-        sortedEngines.count { it.category == "malicious" || it.category == "suspicious" }
+    val detectionEngines = remember(sortedEngines) {
+        sortedEngines.filter { it.category == "malicious" || it.category == "suspicious" }
+    }
+    val detectionCount = detectionEngines.size
+    // In Quick nur Detektionen, in Detailed die (gefilterte) volle Liste.
+    val enginesToShow = if (detailed) visibleEngines else detectionEngines
+
+    // Alle Roh-Felder, die keine eigene Karte haben → „Additional data" (Detailed).
+    val extraAttributes = remember(report.data.attributesRaw) {
+        JsonObject(report.data.attributesRaw.filterKeys { it !in HANDLED_ATTR_KEYS })
     }
 
     androidx.compose.material3.Scaffold(
@@ -239,6 +330,7 @@ fun ResultsScreen(
             )
         }
     ) { innerPadding ->
+        CompositionLocalProvider(LocalShowHelp provides showHelp) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -246,6 +338,8 @@ fun ResultsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+                item { ReportModeToggle(detailed = detailed, onChange = { detailed = it }) }
+
                 val heroTagline = attr.popularThreatClassification?.suggestedThreatLabel
                     ?: if (stats.total > 0) "${stats.total} engines analyzed" else null
                 item { VerdictHero(verdict, style, stats.malicious, stats.suspicious, stats.total, heroTagline) }
@@ -257,65 +351,87 @@ fun ResultsScreen(
                 }
 
                 if (isUrl) {
-                    item { UrlInfoCard(attr) }
+                    item { UrlInfoCard(attr, detailed) }
                 } else {
                     item { FileIdentityCard(attr) }
                 }
 
-                if (hasHashes) {
-                    item { HashesCard(attr, report.data.id) }
-                }
-
+                // History & Community gehören auch in die Quick-Zusammenfassung.
                 item { HistoryReputationCard(attr, e) }
 
-                attr.androguard?.let { ag ->
-                    item { AndroidCard(ag) }
-                }
+                // ----- Tiefe Details nur im Detailed-Modus -----
+                if (detailed) {
+                    if (hasHashes) {
+                        item { HashesCard(attr, report.data.id) }
+                    }
 
-                if (attr.sandboxVerdicts.isNotEmpty()) {
-                    item { SandboxCard(attr) }
-                }
+                    attr.androguard?.let { ag ->
+                        item { AndroidCard(ag) }
+                    }
 
-                if (attr.crowdsourcedYaraResults.isNotEmpty()) {
-                    item { YaraCard(attr) }
-                }
+                    if (attr.sandboxVerdicts.isNotEmpty()) {
+                        item { SandboxCard(attr) }
+                    }
 
-                attr.signatureInfo?.let { sig ->
-                    item {
-                        SectionCard(title = "Signature info", icon = Icons.Default.Verified, accent = MaterialTheme.colorScheme.tertiary) {
-                            JsonDetailList(sig)
+                    if (attr.crowdsourcedYaraResults.isNotEmpty()) {
+                        item { YaraCard(attr) }
+                    }
+
+                    attr.signatureInfo?.let { sig ->
+                        item {
+                            SectionCard(title = "Signature info", icon = Icons.Default.Verified, accent = MaterialTheme.colorScheme.tertiary, help = Help.SIGNATURE) {
+                                JsonDetailList(sig)
+                            }
+                        }
+                    }
+
+                    attr.peInfo?.let { pe ->
+                        item {
+                            ExpandableCard(title = "PE file structure", icon = Icons.Default.Code, accent = MaterialTheme.colorScheme.secondary, help = Help.PE) {
+                                JsonDetailList(pe)
+                            }
+                        }
+                    }
+
+                    attr.exiftool?.let { ex ->
+                        item {
+                            ExpandableCard(title = "ExifTool metadata", icon = Icons.Default.Description, accent = MaterialTheme.colorScheme.secondary, help = Help.EXIF) {
+                                JsonDetailList(ex)
+                            }
+                        }
+                    }
+
+                    // Alles Übrige, was die API liefert (auch dem Modell unbekannte Felder).
+                    if (extraAttributes.isNotEmpty()) {
+                        item {
+                            ExpandableCard(
+                                title = "Additional data",
+                                icon = Icons.Default.DataObject,
+                                accent = MaterialTheme.colorScheme.secondary,
+                                badge = "${extraAttributes.size}",
+                                help = Help.ADDITIONAL
+                            ) {
+                                JsonDetailList(extraAttributes)
+                            }
                         }
                     }
                 }
 
-                attr.peInfo?.let { pe ->
+                // ----- Engine-Ergebnisse (in Quick nur, wenn es Detektionen gibt) -----
+                if (detailed || detectionEngines.isNotEmpty()) {
                     item {
-                        ExpandableCard(title = "PE file structure", icon = Icons.Default.Code, accent = MaterialTheme.colorScheme.secondary) {
-                            JsonDetailList(pe)
-                        }
+                        EnginesHeader(
+                            total = sortedEngines.size,
+                            detections = detectionCount,
+                            onlyDetections = onlyDetections,
+                            onToggle = { onlyDetections = it },
+                            showFilter = detailed
+                        )
                     }
-                }
 
-                attr.exiftool?.let { ex ->
-                    item {
-                        ExpandableCard(title = "ExifTool metadata", icon = Icons.Default.Description, accent = MaterialTheme.colorScheme.secondary) {
-                            JsonDetailList(ex)
-                        }
+                    items(enginesToShow, key = { it.engineName }, contentType = { "engine" }) { engine ->
+                        EngineRow(engine, e)
                     }
-                }
-
-                // ----- Engine-Ergebnisse -----
-                item {
-                    EnginesHeader(
-                        total = sortedEngines.size,
-                        detections = detectionCount,
-                        onlyDetections = onlyDetections,
-                        onToggle = { onlyDetections = it }
-                    )
-                }
-
-                items(visibleEngines) { engine ->
-                    EngineRow(engine, e)
                 }
 
                 item {
@@ -331,6 +447,34 @@ fun ResultsScreen(
 
                 item { Spacer(Modifier.height(8.dp)) }
             }
+        }
+    }
+}
+
+// ============================================================================
+//  ANZEIGEMODUS – Quick vs. Detailed
+// ============================================================================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReportModeToggle(detailed: Boolean, onChange: (Boolean) -> Unit) {
+    val view = LocalView.current
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        SegmentedButton(
+            selected = !detailed,
+            onClick = {
+                triggerHaptic(view, HapticType.CLICK)
+                onChange(false)
+            },
+            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+        ) { Text("Quick") }
+        SegmentedButton(
+            selected = detailed,
+            onClick = {
+                triggerHaptic(view, HapticType.CLICK)
+                onChange(true)
+            },
+            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+        ) { Text("Detailed") }
     }
 }
 
@@ -426,19 +570,19 @@ private fun VerdictGauge(
     val trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f)
     val isSafe = verdict == Verdict.SAFE
     val warnColor = MaterialTheme.expressive.warning
+    val glowBrush = remember(style.color) {
+        Brush.radialGradient(colors = listOf(style.color.copy(alpha = 0.30f), Color.Transparent))
+    }
 
     Box(modifier = Modifier.size(216.dp), contentAlignment = Alignment.Center) {
         // Glow-Hintergrund (Cookie-Form, charakteristisch für Expressive)
         Box(
             modifier = Modifier
                 .size(150.dp)
-                .scale(glow)
+                // graphicsLayer statt scale(): animierter Glow nur in der Draw-Phase
+                .graphicsLayer { scaleX = glow; scaleY = glow }
                 .clip(CookieShape(scallops = 14, amplitude = 0.05f))
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(style.color.copy(alpha = 0.30f), Color.Transparent)
-                    )
-                )
+                .background(glowBrush)
         )
 
         androidx.compose.foundation.Canvas(modifier = Modifier.size(190.dp)) {
@@ -509,7 +653,8 @@ private fun DetectionBreakdownCard(
         title = "Detection overview",
         subtitle = "${stats.total} engines weighed in",
         icon = Icons.Default.Insights,
-        accent = MaterialTheme.colorScheme.primary
+        accent = MaterialTheme.colorScheme.primary,
+        help = Help.DETECTION
     ) {
         val total = stats.total
         StatBar("Malicious", stats.malicious, total, e.danger)
@@ -554,7 +699,8 @@ private fun ThreatClassificationCard(
     SectionCard(
         title = "Threat classification",
         icon = Icons.Default.BugReport,
-        accent = MaterialTheme.expressive.danger
+        accent = MaterialTheme.expressive.danger,
+        help = Help.THREAT
     ) {
         threat.suggestedThreatLabel?.let { label ->
             Surface(
@@ -608,7 +754,8 @@ private fun FileIdentityCard(attr: ReportAttributes) {
     SectionCard(
         title = "File identity",
         icon = Icons.Default.Description,
-        accent = MaterialTheme.colorScheme.secondary
+        accent = MaterialTheme.colorScheme.secondary,
+        help = Help.FILE_IDENTITY
     ) {
         attr.meaningfulName?.let { KeyValueRow("Name", it) }
         attr.typeDescription?.let { KeyValueRow("Type", it) }
@@ -649,11 +796,12 @@ private fun FileIdentityCard(attr: ReportAttributes) {
 //  URL-INFO (für /urls Berichte)
 // ============================================================================
 @Composable
-private fun UrlInfoCard(attr: ReportAttributes) {
+private fun UrlInfoCard(attr: ReportAttributes, detailed: Boolean) {
     SectionCard(
         title = "URL details",
         icon = Icons.Default.Link,
-        accent = MaterialTheme.colorScheme.primary
+        accent = MaterialTheme.colorScheme.primary,
+        help = Help.URL
     ) {
         attr.url?.let { CopyableField("URL", it) }
         attr.finalUrl?.takeIf { it != attr.url }?.let { CopyableField("Final URL", it) }
@@ -680,7 +828,7 @@ private fun UrlInfoCard(attr: ReportAttributes) {
         }
     }
 
-    if (attr.redirectionChain.isNotEmpty()) {
+    if (detailed && attr.redirectionChain.isNotEmpty()) {
         Spacer(Modifier.height(16.dp))
         ExpandableCard(
             title = "Redirection chain",
@@ -693,7 +841,7 @@ private fun UrlInfoCard(attr: ReportAttributes) {
             }
         }
     }
-    if (attr.outgoingLinks.isNotEmpty()) {
+    if (detailed && attr.outgoingLinks.isNotEmpty()) {
         Spacer(Modifier.height(16.dp))
         ExpandableCard(
             title = "Outgoing links",
@@ -717,7 +865,8 @@ private fun HashesCard(attr: ReportAttributes, fallbackSha256: String) {
         title = "Hashes & signatures",
         subtitle = "Tap any value to copy",
         icon = Icons.Default.Fingerprint,
-        accent = MaterialTheme.colorScheme.primary
+        accent = MaterialTheme.colorScheme.primary,
+        help = Help.HASHES
     ) {
         CopyableField("SHA-256", attr.sha256 ?: fallbackSha256)
         attr.sha1?.let { CopyableField("SHA-1", it) }
@@ -738,7 +887,8 @@ private fun HistoryReputationCard(attr: ReportAttributes, e: ExpressiveColors) {
     SectionCard(
         title = "History & community",
         icon = Icons.Default.CalendarMonth,
-        accent = MaterialTheme.colorScheme.tertiary
+        accent = MaterialTheme.colorScheme.tertiary,
+        help = Help.HISTORY
     ) {
         attr.firstSubmissionDate?.let { KeyValueRow("First seen", formatEpochSeconds(it)) }
         attr.lastSubmissionDate?.let { KeyValueRow("Last submitted", formatEpochSeconds(it)) }
@@ -787,7 +937,8 @@ private fun AndroidCard(ag: AndroguardInfo) {
         title = "Android app analysis",
         subtitle = "Androguard",
         icon = Icons.Default.Android,
-        accent = MaterialTheme.colorScheme.primary
+        accent = MaterialTheme.colorScheme.primary,
+        help = Help.ANDROID
     ) {
         ag.packageName?.let { KeyValueRow("Package", it) }
         ag.mainActivity?.let { KeyValueRow("Main activity", it) }
@@ -803,7 +954,8 @@ private fun AndroidCard(ag: AndroguardInfo) {
             title = "Permissions",
             icon = Icons.Default.Key,
             accent = MaterialTheme.expressive.warning,
-            badge = "${permissionKeys.size}"
+            badge = "${permissionKeys.size}",
+            help = Help.PERMISSIONS
         ) {
             permissionKeys.forEach { perm ->
                 PermissionRow(perm)
@@ -864,7 +1016,8 @@ private fun SandboxCard(attr: ReportAttributes) {
     SectionCard(
         title = "Sandbox verdicts",
         icon = Icons.Default.Science,
-        accent = MaterialTheme.colorScheme.secondary
+        accent = MaterialTheme.colorScheme.secondary,
+        help = Help.SANDBOX
     ) {
         attr.sandboxVerdicts.forEach { (_, v) ->
             val malicious = v.category?.contains("malicious", true) == true
@@ -907,7 +1060,8 @@ private fun YaraCard(attr: ReportAttributes) {
         title = "Crowdsourced YARA",
         subtitle = "${attr.crowdsourcedYaraResults.size} rules matched",
         icon = Icons.Default.Security,
-        accent = MaterialTheme.expressive.warning
+        accent = MaterialTheme.expressive.warning,
+        help = Help.YARA
     ) {
         attr.crowdsourcedYaraResults.forEach { yara ->
             Surface(
@@ -939,7 +1093,8 @@ private fun EnginesHeader(
     total: Int,
     detections: Int,
     onlyDetections: Boolean,
-    onToggle: (Boolean) -> Unit
+    onToggle: (Boolean) -> Unit,
+    showFilter: Boolean
 ) {
     val view = LocalView.current
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 4.dp)) {
@@ -947,9 +1102,10 @@ private fun EnginesHeader(
             title = "Engine results",
             subtitle = "$total security vendors · $detections detections",
             icon = Icons.Default.Shield,
-            accent = MaterialTheme.colorScheme.primary
+            accent = MaterialTheme.colorScheme.primary,
+            help = Help.ENGINES
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (showFilter) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(
                 selected = !onlyDetections,
                 onClick = {
@@ -1024,35 +1180,72 @@ private fun EngineRow(engine: EngineResult, e: ExpressiveColors) {
 // ============================================================================
 //  GENERISCHE JSON-DETAIL-LISTE (für variable Strukturen)
 // ============================================================================
+private const val JSON_MAX_DEPTH = 4
+private const val JSON_MAX_KEYS = 100
+private const val JSON_MAX_ARRAY = 30
+
 @Composable
 private fun JsonDetailList(obj: JsonObject, depth: Int = 0) {
     Column(
         modifier = Modifier.padding(start = (depth * 12).dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        obj.entries.take(40).forEach { (key, value) ->
-            when (value) {
-                is JsonPrimitive -> KeyValueRow(prettifyKey(key), value.content)
-                is JsonArray -> {
-                    val primitives = value.mapNotNull { (it as? JsonPrimitive)?.content }
-                    if (primitives.isNotEmpty()) {
-                        KeyValueRow(prettifyKey(key), primitives.take(6).joinToString(", "))
-                    } else {
-                        KeyValueRow(prettifyKey(key), "${value.size} entries")
+        obj.entries.take(JSON_MAX_KEYS).forEach { (key, value) ->
+            JsonNode(prettifyKey(key), value, depth)
+        }
+        if (obj.size > JSON_MAX_KEYS) {
+            KeyValueRow("", "+${obj.size - JSON_MAX_KEYS} more fields")
+        }
+    }
+}
+
+@Composable
+private fun JsonNode(label: String, value: JsonElement, depth: Int) {
+    when (value) {
+        is JsonPrimitive -> KeyValueRow(label, value.content.ifBlank { "—" })
+        is JsonArray -> {
+            val primitives = value.mapNotNull { (it as? JsonPrimitive)?.content }
+            when {
+                value.isEmpty() -> KeyValueRow(label, "—")
+                // Reines Werte-Array: kompakt in einer Zeile.
+                primitives.size == value.size ->
+                    KeyValueRow(label, primitives.take(12).joinToString(", ") + if (primitives.size > 12) " …" else "")
+                depth < JSON_MAX_DEPTH -> {
+                    JsonGroupLabel("$label (${value.size})")
+                    Column(
+                        modifier = Modifier.padding(start = ((depth + 1) * 12).dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        value.take(JSON_MAX_ARRAY).forEachIndexed { i, el ->
+                            JsonNode("#${i + 1}", el, depth + 1)
+                        }
+                        if (value.size > JSON_MAX_ARRAY) KeyValueRow("", "+${value.size - JSON_MAX_ARRAY} more")
                     }
                 }
-                is JsonObject -> {
-                    Text(prettifyKey(key), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                    if (depth < 1) {
-                        JsonDetailList(value, depth + 1)
-                    } else {
-                        KeyValueRow("", "${value.size} fields")
-                    }
-                }
-                else -> {}
+                else -> KeyValueRow(label, "${value.size} entries")
+            }
+        }
+        is JsonObject -> {
+            if (value.isEmpty()) {
+                KeyValueRow(label, "—")
+            } else if (depth < JSON_MAX_DEPTH) {
+                JsonGroupLabel(label)
+                JsonDetailList(value, depth + 1)
+            } else {
+                KeyValueRow(label, "${value.size} fields")
             }
         }
     }
+}
+
+@Composable
+private fun JsonGroupLabel(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.primary,
+        fontWeight = FontWeight.Bold
+    )
 }
 
 private fun prettifyKey(key: String): String =
@@ -1082,7 +1275,7 @@ private fun shareReport(context: android.content.Context, report: FileReportResp
         Verdict.UNKNOWN -> "NO VERDICT"
     }
     val text = buildString {
-        appendLine("🛡️ VT Express – Analysis report")
+        appendLine("Veto: Analysis report")
         appendLine("Verdict: $verdictText")
         appendLine("Detections: ${stats.malicious} malicious / ${stats.suspicious} suspicious of ${stats.total} engines")
         attr.url?.let { appendLine("URL: $it") }

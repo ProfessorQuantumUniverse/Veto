@@ -4,7 +4,7 @@ package com.quantum_prof.vtscansuite.ui.theme
 import androidx.compose.ui.graphics.Color
 
 // ============================================================================
-//  EXPRESSIVE FALLBACK PALETTE
+//  EXPRESSIVE FALLBACK PALETTE.
 //  Wird verwendet, wenn Material You (Dynamic Color) nicht verfügbar ist.
 //  Lebendiges Indigo · Cyan · Magenta – kräftig und "expressive".
 // ============================================================================
@@ -96,7 +96,7 @@ val InversePrimaryDark = Color(0xFF4D54D8)
 val ScrimDark = Color(0xFF000000)
 
 // ============================================================================
-//  SEMANTISCHE VERDIKT-FARBEN
+//  SEMANTISCHE VERDIKT-FARBEN.
 //  Unabhängig vom dynamischen Theme, damit "sicher" immer grün und
 //  "schädlich" immer rot wirkt – egal welche Akzentfarbe das System vorgibt.
 // ============================================================================

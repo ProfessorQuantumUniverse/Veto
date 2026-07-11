@@ -1,6 +1,7 @@
 // ui/components/ExpressiveComponents.kt
 package com.quantum_prof.vtscansuite.ui.components
 
+import android.content.ClipData
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -34,7 +36,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -43,18 +48,17 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,6 +67,8 @@ import androidx.compose.ui.unit.dp
 import com.quantum_prof.vtscansuite.ui.util.HapticType
 import com.quantum_prof.vtscansuite.ui.util.triggerHaptic
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
 
 // ============================================================================
 //  ANIMIERTER ZÄHLER – zählt satt von 0 auf den Zielwert hoch
@@ -147,6 +153,46 @@ fun StatBar(
 }
 
 // ============================================================================
+//  HELP ICON – kleines „?"-Icon mit erklärendem Popup (tap-to-reveal)
+// ============================================================================
+/** Global steuerbar (via Settings): sind die Hilfe-Icons sichtbar? Default an. */
+val LocalShowHelp = androidx.compose.runtime.staticCompositionLocalOf { true }
+
+@Composable
+fun HelpIcon(text: String, modifier: Modifier = Modifier) {
+    var open by remember { mutableStateOf(false) }
+    val view = LocalView.current
+    Box(modifier) {
+        IconButton(
+            onClick = {
+                triggerHaptic(view, HapticType.CLICK)
+                open = true
+            },
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(
+                Icons.AutoMirrored.Outlined.HelpOutline,
+                contentDescription = "What is this?",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            modifier = Modifier.widthIn(max = 300.dp)
+        ) {
+            Text(
+                text,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+            )
+        }
+    }
+}
+
+// ============================================================================
 //  SECTION CARD – Karte mit Icon-Kopf und Inhalt
 // ============================================================================
 @Composable
@@ -156,6 +202,7 @@ fun SectionCard(
     accent: Color,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    help: String? = null,
     content: @Composable () -> Unit
 ) {
     Surface(
@@ -164,7 +211,7 @@ fun SectionCard(
         color = MaterialTheme.colorScheme.surfaceContainerLow
     ) {
         Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            SectionHeader(title = title, icon = icon, accent = accent, subtitle = subtitle)
+            SectionHeader(title = title, icon = icon, accent = accent, subtitle = subtitle, help = help)
             content()
         }
     }
@@ -175,7 +222,8 @@ fun SectionHeader(
     title: String,
     icon: ImageVector,
     accent: Color,
-    subtitle: String? = null
+    subtitle: String? = null,
+    help: String? = null
 ) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(
@@ -187,7 +235,7 @@ fun SectionHeader(
         ) {
             Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(22.dp))
         }
-        Column {
+        Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             if (subtitle != null) {
                 Text(
@@ -197,6 +245,7 @@ fun SectionHeader(
                 )
             }
         }
+        if (help != null && LocalShowHelp.current) HelpIcon(help)
     }
 }
 
@@ -210,6 +259,7 @@ fun ExpandableCard(
     accent: Color,
     badge: String? = null,
     initiallyExpanded: Boolean = false,
+    help: String? = null,
     content: @Composable () -> Unit
 ) {
     var expanded by remember { mutableStateOf(initiallyExpanded) }
@@ -251,10 +301,11 @@ fun ExpandableCard(
                 if (badge != null) {
                     Pill(text = badge, container = accent.copy(alpha = 0.16f), content = accent)
                 }
+                if (help != null && LocalShowHelp.current) HelpIcon(help)
                 Icon(
                     Icons.Default.KeyboardArrowDown,
                     contentDescription = if (expanded) "Collapse" else "Expand",
-                    modifier = Modifier.rotate(rotation),
+                    modifier = Modifier.graphicsLayer { rotationZ = rotation },
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -317,20 +368,23 @@ fun CopyableField(
     value: String,
     modifier: Modifier = Modifier
 ) {
-    val clipboard = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
     val view = LocalView.current
     var copied by remember { mutableStateOf(false) }
 
     LaunchedEffect(copied) {
         if (copied) {
-            delay(1400)
+            delay(1400.milliseconds)
             copied = false
         }
     }
 
     Surface(
         onClick = {
-            clipboard.setText(AnnotatedString(value))
+            scope.launch {
+                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(label, value)))
+            }
             triggerHaptic(view, HapticType.SUCCESS)
             copied = true
         },
@@ -416,20 +470,6 @@ fun TagFlow(
             Pill(text = tag, container = container, content = content)
         }
     }
-}
-
-// ============================================================================
-//  GRADIENT-DIVIDER – feiner farbiger Trenner
-// ============================================================================
-@Composable
-fun GradientDivider(brush: Brush, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(2.dp)
-            .clip(RoundedCornerShape(50))
-            .background(brush)
-    )
 }
 
 // ============================================================================

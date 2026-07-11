@@ -1,5 +1,5 @@
 [versions]
-agp = "8.13.2"
+agp = "9.2.1"
 kotlin = "2.0.21"
 coreKtx = "1.17.0"
 junit = "4.13.2"
@@ -10,8 +10,8 @@ material = "1.13.0"
 retrofit = "2.11.0"
 okhttp = "4.12.0"
 kotlinxSerializationJson = "1.7.3"
-hilt = "2.52"
-ksp = "2.0.21-1.0.25" # Matches Kotlin 2.0.21
+hilt = "2.57.1"
+ksp = "2.0.21-1.0.26" # Matches Kotlin 2.0.21
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }

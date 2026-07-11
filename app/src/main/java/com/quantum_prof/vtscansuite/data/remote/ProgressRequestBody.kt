@@ -9,7 +9,7 @@ import okio.ForwardingSink
 import okio.buffer
 
 /**
- * Umhüllt einen RequestBody und meldet den Upload-Fortschritt (0f..1f).
+ * Umhüllt einen RequestBody und meldet den Upload-Fortschritt (0f...1f).
  * Der Callback wird gedrosselt (nur bei Prozent-Änderung) aufgerufen.
  */
 class ProgressRequestBody(

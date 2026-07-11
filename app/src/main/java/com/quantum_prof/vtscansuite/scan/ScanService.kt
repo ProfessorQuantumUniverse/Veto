@@ -4,7 +4,6 @@ package com.quantum_prof.vtscansuite.scan
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
@@ -65,14 +64,10 @@ class ScanService : Service() {
 
     private fun startInForeground(phase: ScanPhase?, progress: Float?, label: String) {
         val notification = ScanNotifications.buildOngoing(this, phase, progress, label)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ServiceCompat.startForeground(
-                this, ScanNotifications.ONGOING_ID, notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            )
-        } else {
-            startForeground(ScanNotifications.ONGOING_ID, notification)
-        }
+        ServiceCompat.startForeground(
+            this, ScanNotifications.ONGOING_ID, notification,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        )
     }
 
     private fun updateOngoing(state: ScanState.Running) {

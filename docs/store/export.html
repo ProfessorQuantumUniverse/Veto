@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Veto store asset exporter</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0e1016; color: #e4e1e9; font-family: 'Segoe UI', system-ui, Arial, sans-serif; padding: 28px; }
+  h1 { font-weight: 800; letter-spacing: -0.5px; }
+  p { color: #aeb0cc; max-width: 720px; }
+  .bar { margin: 18px 0 26px; }
+  button { background: #5b60e6; color: #fff; border: 0; border-radius: 999px; padding: 12px 22px; font-weight: 700; font-size: 15px; cursor: pointer; }
+  button.ghost { background: #1d1f26; color: #c0c1ff; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 22px; }
+  .card { background: #16181f; border: 1px solid #2a2d36; border-radius: 20px; padding: 16px; }
+  .card img { width: 100%; height: auto; border-radius: 12px; background: #000; display: block; }
+  .card .name { margin: 12px 0 8px; font-weight: 700; }
+  .card .size { color: #9a9ca8; font-size: 13px; }
+  a.dl { display: inline-block; margin-top: 10px; }
+</style>
+</head>
+<body>
+  <h1>Veto store asset exporter</h1>
+  <p>
+    Serve this folder over HTTP so the browser may read the SVG sources, then open this page:
+    <br/><code>cd docs/store &amp;&amp; python -m http.server 8000</code> then visit
+    <code>http://localhost:8000/export.html</code>.
+    Click <b>Download all</b> to save every asset as PNG at its exact target resolution, or download them one by one.
+    The screenshots land at 1080 by 2160 and the feature graphic at 1024 by 500.
+  </p>
+  <div class="bar">
+    <button id="all">Download all PNG</button>
+    <button class="ghost" id="all2x">Download all at 2x (crisper)</button>
+  </div>
+  <div class="grid" id="grid"></div>
+
+<script>
+const ASSETS = [
+  { file: 'svg/feature-graphic.svg',   out: 'featureGraphic.png',           w: 1024, h: 500  },
+  { file: 'svg/1-splash.svg',          out: 'phoneScreenshots/1.png',       w: 1080, h: 2160 },
+  { file: 'svg/2-dashboard.svg',       out: 'phoneScreenshots/2.png',       w: 1080, h: 2160 },
+  { file: 'svg/3-results-safe.svg',    out: 'phoneScreenshots/3.png',       w: 1080, h: 2160 },
+  { file: 'svg/4-results-detailed.svg',out: 'phoneScreenshots/4.png',       w: 1080, h: 2160 },
+  { file: 'svg/5-help.svg',            out: 'phoneScreenshots/5.png',       w: 1080, h: 2160 },
+];
+
+async function rasterize(asset, scale = 1) {
+  const svgText = await (await fetch(asset.file)).text();
+  const blob = new Blob([svgText], { type: 'image/svg+xml' });
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+  const canvas = document.createElement('canvas');
+  canvas.width = asset.w * scale; canvas.height = asset.h * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  URL.revokeObjectURL(url);
+  return await new Promise(res => canvas.toBlob(res, 'image/png'));
+}
+
+function download(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name.split('/').pop();
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+const grid = document.getElementById('grid');
+for (const asset of ASSETS) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `<img src="${asset.file}" alt=""/><div class="name">${asset.out.split('/').pop()}</div>
+                    <div class="size">${asset.w} x ${asset.h}</div>`;
+  const btn = document.createElement('a');
+  btn.className = 'dl'; btn.href = '#'; btn.textContent = 'Download PNG';
+  btn.onclick = async (e) => { e.preventDefault(); download(await rasterize(asset), asset.out); };
+  card.appendChild(btn);
+  grid.appendChild(card);
+}
+
+document.getElementById('all').onclick = async () => {
+  for (const a of ASSETS) { download(await rasterize(a, 1), a.out); await new Promise(r => setTimeout(r, 350)); }
+};
+document.getElementById('all2x').onclick = async () => {
+  for (const a of ASSETS) { download(await rasterize(a, 2), a.out); await new Promise(r => setTimeout(r, 350)); }
+};
+</script>
+</body>
+</html>

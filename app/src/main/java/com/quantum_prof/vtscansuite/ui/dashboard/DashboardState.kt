@@ -13,5 +13,5 @@ sealed interface DashboardState {
         val startedAt: Long = 0L
     ) : DashboardState
     data class Success(val report: FileReportResponse, val label: String = "") : DashboardState
-    data class Error(val errorMsg: String) : DashboardState
+    data class Error(val errorMsg: String, val isRateLimit: Boolean = false) : DashboardState
 }

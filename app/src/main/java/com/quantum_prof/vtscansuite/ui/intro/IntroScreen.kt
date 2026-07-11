@@ -110,10 +110,10 @@ fun IntroScreen(
         animationSpec = infiniteRepeatable(tween(22000, easing = LinearEasing)), label = "spin"
     )
 
-    // Auto-Weiterleitung, wenn bereits ein Key vorhanden ist
+    // Regulärer Start (Key vorhanden): reine Splash-Animation, kein Button – automatisch weiter.
     LaunchedEffect(showContent, apiKeySaved) {
         if (showContent && apiKeySaved) {
-            delay(1100)
+            delay(1400)
             onContinue()
         }
     }
@@ -182,14 +182,14 @@ fun IntroScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                "VT Express",
+                "Veto",
                 style = MaterialTheme.typography.displaySmall,
                 fontWeight = FontWeight.Black,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "Deep malware analysis,\npowered by VirusTotal.",
+                "The native, open source\nVirusTotal client.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -198,19 +198,14 @@ fun IntroScreen(
 
         Spacer(Modifier.weight(1f))
 
-        // ---- Unterer Bereich: API-Key-Eingabe oder Enter ----
-        AnimatedVisibility(
-            visible = showContent,
-            enter = fadeIn(tween(400)) + slideInVertically(tween(450)) { it / 3 }
-        ) {
-            if (apiKeySaved) {
-                GradientButton(
-                    text = "Enter VT Express",
-                    icon = Icons.AutoMirrored.Filled.ArrowForward,
-                    onClick = onContinue,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            } else {
+        // ---- Unterer Bereich ----
+        // Regulärer Start (Key vorhanden): kein Button, nur die Splash-Animation, die
+        // automatisch weiterleitet. Erstes Setup (kein Key): volles Onboarding wie gehabt.
+        if (!apiKeySaved) {
+            AnimatedVisibility(
+                visible = showContent,
+                enter = fadeIn(tween(400)) + slideInVertically(tween(450)) { it / 3 }
+            ) {
                 ApiKeyOnboarding(onSaveApiKey = onSaveApiKey, onContinue = onContinue)
             }
         }

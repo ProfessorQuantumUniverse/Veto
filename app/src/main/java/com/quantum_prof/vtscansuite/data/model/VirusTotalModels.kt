@@ -1,22 +1,81 @@
 // app/src/main/java/com/quantum_prof/vtscansuite/data/model/VirusTotalModels.kt
 package com.quantum_prof.vtscansuite.data.model
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.buildClassSerialDescriptor
+import kotlinx.serialization.descriptors.element
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 @Serializable
 data class FileReportResponse(
     val data: ReportData
 )
 
-@Serializable
+@Serializable(with = ReportDataSerializer::class)
 data class ReportData(
     val id: String, // SHA-256 Hash der Datei
     val type: String,
-    val attributes: ReportAttributes
+    val attributes: ReportAttributes,
+    /**
+     * Die vollständige, unveränderte `attributes`-JSON – enthält AUCH Felder, die das
+     * typisierte [ReportAttributes]-Modell (noch) nicht kennt. So kann die Ergebnisseite
+     * im Detailed-Modus wirklich ALLES anzeigen, was die API liefert.
+     */
+    val attributesRaw: JsonObject = JsonObject(emptyMap())
 )
+
+/**
+ * Liest `attributes` genau einmal als [JsonObject] und leitet daraus sowohl das typisierte
+ * [ReportAttributes] als auch das rohe Objekt ab. Beim Serialisieren (gespeicherte Scans)
+ * wird das Roh-Objekt bevorzugt, damit auch dort nichts verloren geht.
+ */
+object ReportDataSerializer : KSerializer<ReportData> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("ReportData") {
+        element<String>("id")
+        element<String>("type")
+        element("attributes", ReportAttributes.serializer().descriptor)
+    }
+
+    override fun deserialize(decoder: Decoder): ReportData {
+        val input = decoder as? JsonDecoder
+            ?: error("ReportData is only deserializable from JSON")
+        val root = input.decodeJsonElement().jsonObject
+        val id = root["id"]?.jsonPrimitive?.content ?: ""
+        val type = root["type"]?.jsonPrimitive?.content ?: ""
+        val rawAttrs = root["attributes"] as? JsonObject ?: JsonObject(emptyMap())
+        val typed = input.json.decodeFromJsonElement(ReportAttributes.serializer(), rawAttrs)
+        return ReportData(id, type, typed, rawAttrs)
+    }
+
+    override fun serialize(encoder: Encoder, value: ReportData) {
+        val output = encoder as? JsonEncoder
+            ?: error("ReportData is only serializable to JSON")
+        val attrs: JsonElement = if (value.attributesRaw.isNotEmpty()) {
+            value.attributesRaw
+        } else {
+            output.json.encodeToJsonElement(ReportAttributes.serializer(), value.attributes)
+        }
+        output.encodeJsonElement(
+            buildJsonObject {
+                put("id", value.id)
+                put("type", value.type)
+                put("attributes", attrs)
+            }
+        )
+    }
+}
 
 /**
  * Vollständige Abbildung der von der VirusTotal /files Schnittstelle gelieferten Attribute.

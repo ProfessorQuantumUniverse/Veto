@@ -1,0 +1,11 @@
+First public release of Veto.
+
+* A native, open source VirusTotal client
+* Scan installed apps, files, and links
+* Quick and Detailed report modes
+* Plain language help on every section, toggleable in settings
+* Full fidelity reports, including an Additional data section for everything the service returns
+* Background scanning with progress and a completion notification
+* Saved scans for offline viewing
+* Rate limit notice
+* Material 3 design with light and dark themes

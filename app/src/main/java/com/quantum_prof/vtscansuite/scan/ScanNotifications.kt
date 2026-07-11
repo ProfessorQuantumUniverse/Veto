@@ -7,7 +7,6 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.quantum_prof.vtscansuite.MainActivity
@@ -21,17 +20,15 @@ object ScanNotifications {
     const val RESULT_ID = 1002
 
     fun ensureChannels(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val nm = context.getSystemService(NotificationManager::class.java) ?: return
-            nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_PROGRESS, "Scan progress", NotificationManager.IMPORTANCE_LOW)
-                    .apply { description = "Shows an active VirusTotal scan." }
-            )
-            nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_RESULT, "Scan results", NotificationManager.IMPORTANCE_HIGH)
-                    .apply { description = "Notifies you when a scan is finished." }
-            )
-        }
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_PROGRESS, "Scan progress", NotificationManager.IMPORTANCE_LOW)
+                .apply { description = "Shows an active VirusTotal scan." }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_RESULT, "Scan results", NotificationManager.IMPORTANCE_HIGH)
+                .apply { description = "Notifies you when a scan is finished." }
+        )
     }
 
     fun buildOngoing(context: Context, phase: ScanPhase?, progress: Float?, label: String): Notification {

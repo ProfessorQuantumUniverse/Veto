@@ -1,0 +1,20 @@
+Veto is a sleek, open source VirusTotal client for Android. It turns the full VirusTotal service into a fast, native app: submit a file, a link, or one of your installed apps, watch the analysis happen in real time, and read a clear report that goes from a single verdict down to every field the service returns.
+
+Veto is free and open source. It has no accounts of its own, no tracking, and no advertising. You bring your own free VirusTotal API key, so every scan runs under your own account and nothing is routed through a third party.
+
+BEAUTIFULLY NATIVE
+A modern Material 3 interface that follows your system colours, with polished light and dark themes, smooth motion, and thoughtful haptics.
+
+TWO WAYS TO READ A REPORT
+Quick mode gives you an at a glance summary: the verdict, the detection breakdown, the threat classification, key details, and the engines that flagged the item. Detailed mode adds everything else, including hashes, history and community votes, sandbox behaviour, YARA matches, Android app internals, and an Additional data section that surfaces every remaining field the service sends back.
+
+BUILT TO BE UNDERSTOOD
+Every section carries a short, plain language help note that explains what it means. You can switch the notes off in settings once you know your way around.
+
+MADE FOR EVERYDAY USE
+Aggregated results from more than 70 engines. Uploads and analysis show real progress, and scans keep running in the background, so you can leave the app and get a notification the moment the result is ready. Save any report to open it again later, even offline. If you reach the free VirusTotal rate limit, Veto tells you clearly.
+
+OPEN SOURCE
+The full source code is available, so anyone can inspect, build, and contribute.
+
+Veto is not affiliated with or endorsed by VirusTotal.

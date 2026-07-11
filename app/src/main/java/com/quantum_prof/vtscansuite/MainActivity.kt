@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.util.Patterns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
@@ -48,6 +49,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         handleIntent(intent)
         requestNotificationPermissionIfNeeded()
 
@@ -62,6 +64,7 @@ class MainActivity : ComponentActivity() {
                     val clipboardUrl by viewModel.clipboardUrl.collectAsState()
                     val apiKey by viewModel.apiKey.collectAsState()
                     val savedScans by viewModel.savedScans.collectAsState()
+                    val showHelp by viewModel.showHelp.collectAsState()
                     val context = LocalContext.current
 
                     // Deutliches Abschluss-Feedback, sobald ein Scan fertig ist (einmalig pro Wechsel)
@@ -104,7 +107,8 @@ class MainActivity : ComponentActivity() {
                                 onBackClick = {
                                     activeReport = null
                                     viewModel.resetState() // Setzt Dashboard zurück auf Idle
-                                }
+                                },
+                                showHelp = showHelp
                             )
                             TopScreen.Dashboard -> DashboardScreen(
                                 state = uiState,
@@ -121,7 +125,10 @@ class MainActivity : ComponentActivity() {
                                 onNavigateToResults = { r, label ->
                                     activeReport = r
                                     activeLabel = label
-                                }
+                                },
+                                onDismissError = { viewModel.resetState() },
+                                showHelp = showHelp,
+                                onSetShowHelp = { viewModel.setShowHelp(it) }
                             )
                         }
                     }

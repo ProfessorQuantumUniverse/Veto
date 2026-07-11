@@ -1,0 +1,85 @@
+<svg width="1080" height="2160" viewBox="0 0 1080 2160" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0E1016"/><stop offset="1" stop-color="#191C24"/>
+    </linearGradient>
+    <linearGradient id="aurora" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5B60E6"/><stop offset="0.55" stop-color="#9B2F87"/><stop offset="1" stop-color="#00A9C7"/>
+    </linearGradient>
+    <radialGradient id="g1" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#9B2F87" stop-opacity="0.4"/><stop offset="1" stop-color="#9B2F87" stop-opacity="0"/>
+    </radialGradient>
+    <style>text{font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif;}</style>
+  </defs>
+  <rect width="1080" height="2160" fill="url(#bg)"/>
+  <circle cx="820" cy="240" r="420" fill="url(#g1)"/>
+
+  <text x="540" y="150" font-size="60" font-weight="800" fill="#FFFFFF" text-anchor="middle" letter-spacing="-1">Scan anything in seconds</text>
+  <text x="540" y="212" font-size="34" font-weight="500" fill="#AEB0CC" text-anchor="middle">Installed apps, files, and links</text>
+
+  <rect x="160" y="300" width="760" height="1720" rx="76" fill="#16181F" stroke="#2A2D36" stroke-width="2"/>
+  <rect x="182" y="322" width="716" height="1676" rx="56" fill="#101218"/>
+  <clipPath id="scr"><rect x="182" y="322" width="716" height="1676" rx="56"/></clipPath>
+  <g clip-path="url(#scr)">
+    <!-- top bar -->
+    <text x="230" y="440" font-size="52" font-weight="800" fill="#FFFFFF">Veto</text>
+    <circle cx="838" cy="424" r="30" fill="#1D1F26"/>
+    <path d="M838 410 a14 14 0 1 0 0.1 0 M838 424 v10" fill="none" stroke="#C0C1FF" stroke-width="4"/>
+
+    <!-- API status card -->
+    <rect x="222" y="500" width="636" height="130" rx="34" fill="#0C5128" fill-opacity="0.35"/>
+    <circle cx="292" cy="565" r="30" fill="#0C5128"/>
+    <path d="M280 565 l9 9 16 -19" fill="none" stroke="#77DD9B" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="346" y="552" font-size="30" font-weight="700" fill="#93F8B5">API key configured</text>
+    <text x="346" y="592" font-size="24" fill="#A9C9B5">Your scans are authorized</text>
+
+    <!-- action card 1: installed app -->
+    <rect x="222" y="662" width="636" height="150" rx="34" fill="#1D1F26"/>
+    <rect x="248" y="700" width="74" height="74" rx="22" fill="#5B60E6" fill-opacity="0.18"/>
+    <rect x="266" y="716" width="38" height="42" rx="8" fill="none" stroke="#C0C1FF" stroke-width="5"/>
+    <text x="352" y="726" font-size="32" font-weight="700" fill="#E4E1E9">Scan an installed app</text>
+    <text x="352" y="766" font-size="24" fill="#9A9CA8">Check any app on your device</text>
+    <circle cx="812" cy="737" r="30" fill="#5B60E6" fill-opacity="0.15"/>
+    <path d="M804 737 h16 m-6 -6 l6 6 -6 6" fill="none" stroke="#C0C1FF" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- action card 2: link -->
+    <rect x="222" y="838" width="636" height="150" rx="34" fill="#1D1F26"/>
+    <rect x="248" y="876" width="74" height="74" rx="22" fill="#00A9C7" fill-opacity="0.18"/>
+    <path d="M272 905 a16 16 0 0 1 22 -3 l6 6 a16 16 0 0 1 -3 22 M300 923 a16 16 0 0 1 -22 3 l-6 -6 a16 16 0 0 1 3 -22"
+          fill="none" stroke="#84D2E5" stroke-width="5" stroke-linecap="round"/>
+    <text x="352" y="902" font-size="32" font-weight="700" fill="#E4E1E9">Scan a link</text>
+    <text x="352" y="942" font-size="24" fill="#9A9CA8">Paste or share any URL</text>
+    <circle cx="812" cy="913" r="30" fill="#00A9C7" fill-opacity="0.15"/>
+    <path d="M804 913 h16 m-6 -6 l6 6 -6 6" fill="none" stroke="#84D2E5" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- action card 3: file -->
+    <rect x="222" y="1014" width="636" height="150" rx="34" fill="#1D1F26"/>
+    <rect x="248" y="1052" width="74" height="74" rx="22" fill="#FFACE4" fill-opacity="0.16"/>
+    <path d="M272 1066 h24 l10 10 v34 h-34 z" fill="none" stroke="#FFACE4" stroke-width="5" stroke-linejoin="round"/>
+    <text x="352" y="1078" font-size="32" font-weight="700" fill="#E4E1E9">Scan a file</text>
+    <text x="352" y="1118" font-size="24" fill="#9A9CA8">Pick any file to analyze</text>
+    <circle cx="812" cy="1089" r="30" fill="#FFACE4" fill-opacity="0.14"/>
+    <path d="M804 1089 h16 m-6 -6 l6 6 -6 6" fill="none" stroke="#FFACE4" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- recent / saved -->
+    <text x="230" y="1266" font-size="30" font-weight="700" fill="#AEB0CC">Saved scans</text>
+    <rect x="222" y="1296" width="636" height="120" rx="30" fill="#18191F"/>
+    <rect x="248" y="1326" width="60" height="60" rx="18" fill="#272930"/>
+    <path d="M262 1356 l10 10 18 -22" fill="none" stroke="#77DD9B" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="330" y="1346" font-size="28" font-weight="600" fill="#E4E1E9">Signal.apk</text>
+    <text x="330" y="1382" font-size="22" fill="#9A9CA8">Clean  ·  saved today</text>
+
+    <rect x="222" y="1432" width="636" height="120" rx="30" fill="#18191F"/>
+    <rect x="248" y="1462" width="60" height="60" rx="18" fill="#272930"/>
+    <path d="M278 1476 v22 m0 14 v2" stroke="#FFB2BB" stroke-width="6" stroke-linecap="round"/>
+    <text x="330" y="1482" font-size="28" font-weight="600" fill="#E4E1E9">invoice.exe</text>
+    <text x="330" y="1518" font-size="22" fill="#9A9CA8">42 detections  ·  yesterday</text>
+
+    <!-- bottom bar -->
+    <rect x="182" y="1878" width="716" height="120" fill="#0C0E13"/>
+    <circle cx="382" cy="1938" r="8" fill="#C0C1FF"/>
+    <text x="382" y="1972" font-size="22" fill="#C0C1FF" text-anchor="middle">Home</text>
+    <text x="540" y="1946" font-size="22" fill="#6C6E7A" text-anchor="middle">Saved</text>
+    <text x="700" y="1946" font-size="22" fill="#6C6E7A" text-anchor="middle">Settings</text>
+  </g>
+</svg>

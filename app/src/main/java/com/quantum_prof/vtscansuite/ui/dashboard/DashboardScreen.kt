@@ -9,20 +9,30 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -33,13 +43,57 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Android
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.GppBad
+import androidx.compose.material.icons.filled.GppGood
+import androidx.compose.material.icons.filled.GppMaybe
+import androidx.compose.material.icons.filled.HourglassTop
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.TravelExplore
+import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -98,10 +152,12 @@ fun DashboardScreen(
     onSaveApiKey: (String) -> Unit,
     onOpenSavedScan: (SavedScan) -> Unit,
     onDeleteSavedScan: (SavedScan) -> Unit,
-    onNavigateToResults: (FileReportResponse, String) -> Unit
+    onNavigateToResults: (FileReportResponse, String) -> Unit,
+    onDismissError: () -> Unit,
+    showHelp: Boolean,
+    onSetShowHelp: (Boolean) -> Unit
 ) {
     val view = LocalView.current
-    val context = LocalContext.current
     var currentScreen by remember { mutableStateOf(DashboardSubScreen.Home) }
 
     // Systemzurück auf einem Unterbildschirm -> zurück zur Startseite (App nicht schließen)
@@ -135,7 +191,7 @@ fun DashboardScreen(
                     title = {
                         Text(
                             when (currentScreen) {
-                                DashboardSubScreen.Home -> "VT Express"
+                                DashboardSubScreen.Home -> "Veto"
                                 DashboardSubScreen.UrlScan -> "Link Scanner"
                                 DashboardSubScreen.CustomFileScan -> "File Scanner"
                                 DashboardSubScreen.InstalledApps -> "App Scanner"
@@ -215,7 +271,9 @@ fun DashboardScreen(
                         onSaveApiKey = {
                             onSaveApiKey(it)
                             triggerHaptic(view, HapticType.SUCCESS)
-                        }
+                        },
+                        showHelp = showHelp,
+                        onSetShowHelp = onSetShowHelp
                     )
                 }
             }
@@ -273,31 +331,34 @@ fun DashboardScreen(
 
         // 2. ERROR STATE DIALOG (Sehr sauber & abfangbar)
         if (state is DashboardState.Error) {
+            val isRateLimit = state.isRateLimit
             AlertDialog(
-                onDismissRequest = {},
+                onDismissRequest = {
+                    triggerHaptic(view, HapticType.CLICK)
+                    onDismissError()
+                },
                 confirmButton = {
                     Button(
                         onClick = {
                             triggerHaptic(view, HapticType.CLICK)
-                            // Setzt den State zurück auf Idle, damit der Fehler verschwindet
-                            onSaveApiKey("") // Triggert VM-Methode um state zurückzusetzen, oder rufe Hilfsmethode auf
+                            onDismissError()
                         }
                     ) {
-                        Text("Got it")
+                        Text(if (isRateLimit) "OK, I'll wait" else "Got it")
                     }
                 },
+                icon = {
+                    Icon(
+                        imageVector = if (isRateLimit) Icons.Default.HourglassTop else Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = if (isRateLimit) MaterialTheme.expressive.warning else MaterialTheme.colorScheme.error
+                    )
+                },
                 title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Warning,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error
-                        )
-                        Text("Scan failed", fontWeight = FontWeight.Bold)
-                    }
+                    Text(
+                        if (isRateLimit) "Rate limit reached" else "Scan failed",
+                        fontWeight = FontWeight.Bold
+                    )
                 },
                 text = {
                     Text(
@@ -348,7 +409,9 @@ private fun ScanningOverlay(
                     Box(
                         modifier = Modifier
                             .size(96.dp)
-                            .scale(pulse)
+                            // graphicsLayer statt scale(): animierter Wert wird erst in der
+                            // Draw-Phase gelesen → keine Recomposition/Relayout pro Frame
+                            .graphicsLayer { scaleX = pulse; scaleY = pulse }
                             .clip(CookieShape(scallops = 12, amplitude = 0.06f))
                             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
                     )
@@ -1211,7 +1274,9 @@ private fun SavedScanCard(
 @Composable
 fun SettingsScreen(
     apiKeySaved: Boolean,
-    onSaveApiKey: (String) -> Unit
+    onSaveApiKey: (String) -> Unit,
+    showHelp: Boolean,
+    onSetShowHelp: (Boolean) -> Unit
 ) {
     val view = LocalView.current
     val context = LocalContext.current
@@ -1300,6 +1365,44 @@ fun SettingsScreen(
             },
             modifier = Modifier.fillMaxWidth()
         )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Report display preferences
+        Text(
+            "Report display 🧩",
+            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.titleMedium
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Show help icons", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Little “?” buttons on the results page that explain each section.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = showHelp,
+                    onCheckedChange = {
+                        triggerHaptic(view, HapticType.CLICK)
+                        onSetShowHelp(it)
+                    }
+                )
+            }
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
 

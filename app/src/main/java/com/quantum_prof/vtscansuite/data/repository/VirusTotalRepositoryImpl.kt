@@ -4,6 +4,7 @@ package com.quantum_prof.vtscansuite.data.repository
 import android.util.Base64
 import com.quantum_prof.vtscansuite.data.model.FileReportResponse
 import com.quantum_prof.vtscansuite.data.remote.ProgressRequestBody
+import com.quantum_prof.vtscansuite.data.remote.RateLimitException
 import com.quantum_prof.vtscansuite.data.remote.VTScanApiService
 import com.quantum_prof.vtscansuite.domain.repository.ProgressCallback
 import com.quantum_prof.vtscansuite.domain.repository.ScanPhase
@@ -15,6 +16,7 @@ import okhttp3.RequestBody.Companion.asRequestBody
 import java.io.File
 import java.security.MessageDigest
 import javax.inject.Inject
+import kotlin.time.Duration.Companion.milliseconds
 
 class VirusTotalRepositoryImpl @Inject constructor(
     private val api: VTScanApiService
@@ -32,7 +34,7 @@ class VirusTotalRepositoryImpl @Inject constructor(
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!)
             } else {
-                Result.failure(Exception("API Error Code: ${response.code()}"))
+                Result.failure(httpError(response.code(), "API error"))
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -45,7 +47,7 @@ class VirusTotalRepositoryImpl @Inject constructor(
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!)
             } else {
-                Result.failure(Exception("API Error Code: ${response.code()}"))
+                Result.failure(httpError(response.code(), "API error"))
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -73,7 +75,7 @@ class VirusTotalRepositoryImpl @Inject constructor(
             } else {
                 val urlResponse = api.getUploadUrl(apiKey)
                 if (!urlResponse.isSuccessful || urlResponse.body() == null) {
-                    return Result.failure(Exception("Could not obtain an upload URL (code ${urlResponse.code()})"))
+                    return Result.failure(httpError(urlResponse.code(), "Could not obtain an upload URL"))
                 }
                 val uploadUrl = urlResponse.body()!!.data
                 api.uploadFileToUrl(uploadUrl, apiKey, body)
@@ -89,7 +91,7 @@ class VirusTotalRepositoryImpl @Inject constructor(
                 onProgress(ScanPhase.FETCHING, null)
                 fetchPopulatedReport(apiKey, fileHash, isUrl = false, onProgress)
             } else {
-                Result.failure(Exception("Upload error (code ${uploadResponse.code()})"))
+                Result.failure(httpError(uploadResponse.code(), "Upload error"))
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -116,7 +118,7 @@ class VirusTotalRepositoryImpl @Inject constructor(
             onProgress(ScanPhase.SUBMITTING, null)
             val submit = api.submitUrl(apiKey, normalized)
             if (!submit.isSuccessful || submit.body() == null) {
-                return Result.failure(Exception("Could not submit the URL (code ${submit.code()})"))
+                return Result.failure(httpError(submit.code(), "Could not submit the URL"))
             }
             val analysisId = submit.body()!!.data.id
 
@@ -146,7 +148,7 @@ class VirusTotalRepositoryImpl @Inject constructor(
         var urlInfoId: String? = null
         while (System.currentTimeMillis() < deadline) {
             onProgress(ScanPhase.ANALYZING, null)
-            delay(pollIntervalMs)
+            delay(pollIntervalMs.milliseconds)
             val response = runCatching { api.getAnalysisReport(apiKey, analysisId) }.getOrNull()
             if (response != null) {
                 if (response.code() == 429) continue // Rate-Limit: einfach weiter warten
@@ -179,7 +181,7 @@ class VirusTotalRepositoryImpl @Inject constructor(
         while (tries < populateRetries) {
             if (last.getOrNull().isPopulated()) return last
             onProgress(ScanPhase.ANALYZING, null) // VirusTotal stellt das Ergebnis noch fertig
-            delay(populateIntervalMs)
+            delay(populateIntervalMs.milliseconds)
             tries++
             last = getReport(apiKey, id, isUrl)
         }
@@ -197,6 +199,10 @@ class VirusTotalRepositoryImpl @Inject constructor(
         val attrs = this?.data?.attributes ?: return false
         return attrs.lastAnalysisResults.isNotEmpty() || attrs.lastAnalysisStats.total > 0
     }
+
+    /** Bildet HTTP-Fehlercodes auf Exceptions ab – 429 wird zum spezifischen Rate-Limit-Hinweis. */
+    private fun httpError(code: Int, context: String): Exception =
+        if (code == 429) RateLimitException() else Exception("$context (code $code)")
 
     private fun calculateSha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")

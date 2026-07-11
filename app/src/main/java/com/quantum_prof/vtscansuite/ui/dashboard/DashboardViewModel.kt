@@ -55,6 +55,9 @@ class DashboardViewModel @Inject constructor(
     val savedScans: StateFlow<List<SavedScan>> = savedScansRepository.savedScans
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val showHelp: StateFlow<Boolean> = prefsRepository.showHelpFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
     init {
         loadInstalledApps()
     }
@@ -79,6 +82,12 @@ class DashboardViewModel @Inject constructor(
         }
     }
 
+    fun setShowHelp(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            prefsRepository.setShowHelp(enabled)
+        }
+    }
+
     fun resetState() = scanManager.acknowledge()
 
     fun scanUrl(url: String) {
@@ -89,9 +98,6 @@ class DashboardViewModel @Inject constructor(
     fun scanApp(app: InstalledApp) = scanManager.scanApp(app.apkFile, app.name)
 
     fun scanUri(uri: Uri) = scanManager.scanUri(uri)
-
-    // -------- Gespeicherte Scans --------
-    fun isSaved(reportId: String): Boolean = savedScans.value.any { it.id == reportId }
 
     fun toggleSave(report: FileReportResponse, label: String = "") {
         viewModelScope.launch(Dispatchers.IO) {
@@ -122,7 +128,7 @@ class DashboardViewModel @Inject constructor(
             startedAt = startedAt
         )
         is ScanState.Success -> DashboardState.Success(report, label)
-        is ScanState.Error -> DashboardState.Error(message)
+        is ScanState.Error -> DashboardState.Error(message, isRateLimit)
     }
 
     private fun phaseMessage(phase: ScanPhase): String = when (phase) {

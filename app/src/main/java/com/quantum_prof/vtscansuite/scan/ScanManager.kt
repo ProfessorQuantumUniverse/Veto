@@ -8,6 +8,7 @@ import android.provider.OpenableColumns
 import androidx.core.content.ContextCompat
 import com.quantum_prof.vtscansuite.data.model.FileReportResponse
 import com.quantum_prof.vtscansuite.data.model.SavedScan
+import com.quantum_prof.vtscansuite.data.remote.RateLimitException
 import com.quantum_prof.vtscansuite.data.repository.PrefsRepository
 import com.quantum_prof.vtscansuite.data.repository.SavedScansRepository
 import com.quantum_prof.vtscansuite.domain.repository.ProgressCallback
@@ -38,7 +39,7 @@ sealed interface ScanState {
         val label: String
     ) : ScanState
     data class Success(val report: FileReportResponse, val label: String) : ScanState
-    data class Error(val message: String, val label: String) : ScanState
+    data class Error(val message: String, val label: String, val isRateLimit: Boolean = false) : ScanState
 }
 
 /**
@@ -64,8 +65,6 @@ class ScanManager @Inject constructor(
         private set
 
     private var job: Job? = null
-
-    val isScanning: Boolean get() = _state.value is ScanState.Running
 
     fun scanUrl(url: String) = start(url.trim()) { key, onProgress ->
         repository.scanUrl(key, url, onProgress)
@@ -150,7 +149,13 @@ class ScanManager @Inject constructor(
             val result = runCatching { block(key, onProgress) }.getOrElse { Result.failure(it) }
             _state.value = result.fold(
                 onSuccess = { ScanState.Success(it, label) },
-                onFailure = { ScanState.Error(it.localizedMessage ?: "Scan failed.", label) }
+                onFailure = {
+                    ScanState.Error(
+                        message = it.localizedMessage ?: "Scan failed.",
+                        label = label,
+                        isRateLimit = it is RateLimitException
+                    )
+                }
             )
         }
     }

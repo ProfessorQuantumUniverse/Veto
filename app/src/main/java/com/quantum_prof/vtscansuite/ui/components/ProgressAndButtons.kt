@@ -2,7 +2,6 @@
 package com.quantum_prof.vtscansuite.ui.components
 
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -16,7 +15,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -32,7 +30,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,7 +40,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -60,10 +62,14 @@ fun ExpressiveProgressBar(
     trackColor: Color = MaterialTheme.colorScheme.surfaceContainerHighest,
     height: androidx.compose.ui.unit.Dp = 12.dp
 ) {
-    BoxWithConstraints(
+    val density = LocalDensity.current
+    var containerWidthPx by remember { mutableIntStateOf(0) }
+
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .height(height)
+            .onSizeChanged { containerWidthPx = it.width }
             .clip(RoundedCornerShape(50))
             .background(trackColor)
     ) {
@@ -84,8 +90,8 @@ fun ExpressiveProgressBar(
                     .clip(RoundedCornerShape(50))
                     .background(brush)
             )
-        } else {
-            val fullWidth = maxWidth
+        } else if (containerWidthPx > 0) {
+            val fullWidth = with(density) { containerWidthPx.toDp() }
             val segment = fullWidth * 0.42f
             val transition = rememberInfiniteTransition(label = "indeterminate")
             val t by transition.animateFloat(

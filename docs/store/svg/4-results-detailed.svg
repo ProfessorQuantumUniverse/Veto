@@ -1,0 +1,82 @@
+<svg width="1080" height="2160" viewBox="0 0 1080 2160" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0E1016"/><stop offset="1" stop-color="#191C24"/>
+    </linearGradient>
+    <radialGradient id="g1" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#8E1233" stop-opacity="0.7"/><stop offset="1" stop-color="#8E1233" stop-opacity="0"/>
+    </radialGradient>
+    <style>text{font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif;}</style>
+  </defs>
+  <rect width="1080" height="2160" fill="url(#bg)"/>
+  <circle cx="300" cy="270" r="380" fill="url(#g1)"/>
+
+  <text x="540" y="150" font-size="60" font-weight="800" fill="#FFFFFF" text-anchor="middle" letter-spacing="-1">Every detail, when you want it</text>
+  <text x="540" y="212" font-size="34" font-weight="500" fill="#AEB0CC" text-anchor="middle">Detailed mode shows all the data</text>
+
+  <rect x="160" y="300" width="760" height="1720" rx="76" fill="#16181F" stroke="#2A2D36" stroke-width="2"/>
+  <rect x="182" y="322" width="716" height="1676" rx="56" fill="#101218"/>
+  <clipPath id="scr"><rect x="182" y="322" width="716" height="1676" rx="56"/></clipPath>
+  <g clip-path="url(#scr)">
+    <!-- top bar -->
+    <path d="M250 400 l-20 20 20 20 M230 420 h40" fill="none" stroke="#E4E1E9" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="540" y="434" font-size="34" font-weight="700" fill="#E4E1E9" text-anchor="middle">Analysis report</text>
+
+    <!-- toggle: Detailed active -->
+    <rect x="222" y="486" width="636" height="76" rx="38" fill="#1D1F26" stroke="#2A2D36" stroke-width="2"/>
+    <text x="384" y="534" font-size="30" font-weight="600" fill="#9A9CA8" text-anchor="middle">Quick</text>
+    <rect x="540" y="492" width="312" height="64" rx="32" fill="#5B60E6"/>
+    <text x="696" y="534" font-size="30" font-weight="700" fill="#FFFFFF" text-anchor="middle">Detailed</text>
+
+    <!-- verdict hero (malicious) -->
+    <rect x="222" y="590" width="636" height="360" rx="52" fill="#8E1233" fill-opacity="0.30"/>
+    <g transform="translate(540,760)">
+      <circle r="118" fill="none" stroke="#8E1233" stroke-width="30"/>
+      <circle r="118" fill="none" stroke="#FFB2BB" stroke-width="30" stroke-linecap="round"
+              stroke-dasharray="741" stroke-dashoffset="308" transform="rotate(-90)"/>
+      <text x="0" y="-2" font-size="58" font-weight="800" fill="#FFD9DD" text-anchor="middle">42</text>
+      <text x="0" y="40" font-size="24" fill="#F4B8C1" text-anchor="middle">/ 72</text>
+    </g>
+    <text x="540" y="922" font-size="40" font-weight="800" fill="#FFD9DD" text-anchor="middle">Threat detected</text>
+
+    <!-- threat classification -->
+    <rect x="222" y="984" width="636" height="230" rx="40" fill="#18191F"/>
+    <text x="252" y="1042" font-size="30" font-weight="700" fill="#E4E1E9">Threat classification</text>
+    <circle cx="812" cy="1032" r="26" fill="#22242C"/>
+    <text x="812" y="1042" font-size="30" font-weight="800" fill="#9A9CA8" text-anchor="middle">?</text>
+    <rect x="252" y="1072" width="330" height="50" rx="16" fill="#8E1233" fill-opacity="0.4"/>
+    <text x="272" y="1105" font-size="26" font-weight="700" fill="#FFD9DD" font-family="monospace">trojan.androidos/agent</text>
+    <rect x="252" y="1140" width="150" height="46" rx="23" fill="#8E1233" fill-opacity="0.4"/>
+    <text x="327" y="1170" font-size="22" font-weight="600" fill="#FFD9DD" text-anchor="middle">trojan (28)</text>
+    <rect x="420" y="1140" width="160" height="46" rx="23" fill="#3338BE" fill-opacity="0.5"/>
+    <text x="500" y="1170" font-size="22" font-weight="600" fill="#C0C1FF" text-anchor="middle">dropper (12)</text>
+
+    <!-- engine rows -->
+    <text x="252" y="1290" font-size="30" font-weight="700" fill="#AEB0CC">Engine results</text>
+    <g>
+      <rect x="222" y="1316" width="636" height="104" rx="26" fill="#8E1233" fill-opacity="0.22"/>
+      <circle cx="278" cy="1368" r="18" fill="#8E1233"/><path d="M270 1362 l16 12 M286 1362 l-16 12" stroke="#FFB2BB" stroke-width="4" stroke-linecap="round"/>
+      <text x="316" y="1358" font-size="28" font-weight="700" fill="#E4E1E9">Bitdefender</text>
+      <text x="316" y="1394" font-size="22" fill="#FFB2BB" font-family="monospace">Android.Trojan.Agent.KG</text>
+
+      <rect x="222" y="1432" width="636" height="104" rx="26" fill="#8E1233" fill-opacity="0.22"/>
+      <circle cx="278" cy="1484" r="18" fill="#8E1233"/><path d="M270 1478 l16 12 M286 1478 l-16 12" stroke="#FFB2BB" stroke-width="4" stroke-linecap="round"/>
+      <text x="316" y="1474" font-size="28" font-weight="700" fill="#E4E1E9">ESET-NOD32</text>
+      <text x="316" y="1510" font-size="22" fill="#FFB2BB" font-family="monospace">a variant of Android/Agent</text>
+
+      <rect x="222" y="1548" width="636" height="104" rx="26" fill="#1D2028"/>
+      <circle cx="278" cy="1600" r="18" fill="#0C5128"/><path d="M270 1600 l6 6 12 -14" fill="none" stroke="#77DD9B" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="316" y="1590" font-size="28" font-weight="700" fill="#E4E1E9">Kaspersky</text>
+      <text x="316" y="1626" font-size="22" fill="#9A9CA8">No threat detected</text>
+    </g>
+
+    <!-- additional data card -->
+    <rect x="222" y="1672" width="636" height="104" rx="26" fill="#18191F"/>
+    <rect x="250" y="1700" width="56" height="56" rx="16" fill="#00A9C7" fill-opacity="0.16"/>
+    <text x="278" y="1744" font-size="34" font-weight="800" fill="#84D2E5" text-anchor="middle">{ }</text>
+    <text x="330" y="1716" font-size="28" font-weight="700" fill="#E4E1E9">Additional data</text>
+    <text x="330" y="1750" font-size="22" fill="#9A9CA8">packers, sigma, capabilities</text>
+    <rect x="742" y="1710" width="80" height="44" rx="22" fill="#00A9C7" fill-opacity="0.18"/>
+    <text x="782" y="1740" font-size="24" font-weight="700" fill="#84D2E5" text-anchor="middle">14</text>
+  </g>
+</svg>

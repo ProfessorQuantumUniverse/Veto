@@ -36,11 +36,16 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
     buildFeatures {
         compose = true
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+        // Opt-in auf das künftige Standardverhalten (Annotation gilt für Param + Feld), KT-73255
+        freeCompilerArgs.add("-Xannotation-default-target=param-property")
     }
 }
 
@@ -59,7 +64,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
-    val composeBom = platform("androidx.compose:compose-bom:2024.02.01")
+    val composeBom = platform("androidx.compose:compose-bom:2025.09.00")
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
@@ -71,15 +76,15 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
 
     // Integration with Activities
-    implementation("androidx.activity:activity-compose:1.8.2")
+    implementation("androidx.activity:activity-compose:1.13.0")
 
     // Tooling support (debug)
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // ... other dependencies
-    implementation("com.squareup.retrofit2:converter-kotlinx-serialization:2.11.0")
+    implementation("com.squareup.retrofit2:converter-kotlinx-serialization:3.0.0")
 
-    implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation("androidx.datastore:datastore-preferences:1.2.1")
     // Falls du zusätzlich Proto DataStore nutzt:
-    implementation("androidx.datastore:datastore:1.1.1")
+    implementation("androidx.datastore:datastore:1.2.1")
 }
