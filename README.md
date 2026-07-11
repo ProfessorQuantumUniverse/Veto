@@ -115,9 +115,19 @@ The app talks only to VirusTotal, using the API key you provide. The items you s
 
 ## License
 
+This project is licensed under the terms of the **GNU General Public License v3.0**.
 
+### Key Terms of GPLv3:
+* **Commercial use:** Permitted
+* **Modification:** Permitted
+* **Distribution:** Permitted
+* **Source code disclosure:** Required upon distribution
+* **Same license:** Modified code must also use GPLv3
+* **Liability & Warranty:** None provided by authors
 
-<div align="center">
+For more details, please see the [LICENSE](LICENSE) file in this repository.
+
+---
 
 Powered by the VirusTotal API. Not affiliated with or endorsed by VirusTotal.
 
