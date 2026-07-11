@@ -26,13 +26,13 @@ It is free and open source, with no accounts of its own, no tracking, and no adv
 <div align="center">
 <table>
   <tr>
-    <td><img src="docs/store/svg/1-splash.svg" width="200"/></td>
-    <td><img src="docs/store/svg/2-dashboard.svg" width="200"/></td>
-    <td><img src="docs/store/svg/3-results-safe.svg" width="200"/></td>
+    <td><img src="docs/store/screenshots/dashboard.jpg" width="200"/></td>
+    <td><img src="docs/store/screenshots/results-clean.jpg" width="200"/></td>
+    <td><img src="docs/store/screenshots/detailed.jpg" width="200"/></td>
   </tr>
   <tr>
-    <td><img src="docs/store/svg/4-results-detailed.svg" width="200"/></td>
-    <td><img src="docs/store/svg/5-help.svg" width="200"/></td>
+    <td><img src="docs/store/screenshots/settings.jpg" width="200"/></td>
+    <td><img src="docs/store/screenshots/saved.jpg" width="200"/></td>
     <td></td>
   </tr>
 </table>
