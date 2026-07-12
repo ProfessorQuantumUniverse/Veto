@@ -17,8 +17,8 @@ android {
         applicationId = "com.quantum_prof.vtscansuite"
         minSdk = 30
         targetSdk = 36
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = 3
+        versionName = "2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -38,6 +38,13 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+
+    dependenciesInfo {
+        // Deaktiviert die Metadaten für Abhängigkeiten in der APK
+        includeInApk = false
+        // Deaktiviert die Metadaten für Abhängigkeiten im App Bundle (AAB)
+        includeInBundle = false
     }
 }
 
