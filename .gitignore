@@ -1,15 +1,44 @@
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
+# Gradle-Build-Dateien und Cache
+.gradle/
+build/
+/*/build/
+/*/out/
+.modules/
+
+# Lokale Konfigurationen (Enthält deinen SDK-Pfad)
 local.properties
+
+# Logdateien und OS-Müll
+*.log
+.DS_Store
+Thumbs.db
+
+# Android Studio & IntelliJ-Dateien
+.idea/
+*.iml
+*.ipr
+*.iws
+.navigation/
+captures/
+.cxx/
+.externalNativeBuild/
+
+# Generierte Binärdateien und Ausgaben
+*.apk
+*.ap_
+*.aab
+*.dex
+output.json
+
+# Geheimnisse und Signaturen (Exrem wichtig!)
+*.jks
+*.keystore
+*.signing/
+
+# F-Droid & Gradle-Wrapper (Wichtig: JAR im Wrapper erlauben!)
+*.jar
+!/gradle/wrapper/gradle-wrapper.jar
+
+# Optionale lokale Tools
+*~
+*.swp
