@@ -42,3 +42,5 @@ output.json
 # Optionale lokale Tools
 *~
 *.swp
+
+*.claude
