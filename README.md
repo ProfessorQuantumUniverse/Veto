@@ -13,6 +13,14 @@ Free and open source. Bring your own VirusTotal API key to scan files, links, an
 [![Jetpack Compose](https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4?style=flat-square&logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
 [![minSdk](https://img.shields.io/badge/minSdk-30-4A50E0?style=flat-square)](https://developer.android.com/tools/releases/platforms)
 
+<!-- INSTALL BUTTONS START -->
+<p align="center">
+  <a href="https://f-droid.org/packages/com.quantum_prof.vtscansuite/"><img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png" alt="Get it on F-Droid" height="80"></a>
+  <a href="https://github.com/ProfessorQuantumUniverse/Veto/releases/latest"><img src="https://raw.githubusercontent.com/Kunzisoft/Github-badge/main/get-it-on-github.png" alt="Get it on GitHub" height="80"></a>
+  <a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/ProfessorQuantumUniverse/Veto"><img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="80"></a>
+</p>
+<!-- INSTALL BUTTONS END -->
+
 </div>
 
 ## What is Veto?
