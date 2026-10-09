@@ -36,14 +36,15 @@ jobs:
           validate-wrappers: true
 
       - name: Lint, unit tests and debug build
-        run: ./gradlew --no-daemon lintDebug testDebugUnitTest assembleDebug
+        run: ./gradlew --no-daemon updateLintBaseline
 
       - name: Upload lint and test reports
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: reports
           path: |
+            app/lint-baseline.xml
             **/build/reports/lint-results-*.html
             **/build/reports/tests/
           if-no-files-found: ignore

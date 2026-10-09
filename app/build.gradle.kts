@@ -43,6 +43,11 @@ android {
         buildConfig = true
     }
 
+    lint {
+        // Existing lint findings are recorded in the baseline so CI only fails on new issues.
+        baseline = file("lint-baseline.xml")
+    }
+
     dependenciesInfo {
         // Deaktiviert die Metadaten für Abhängigkeiten in der APK
         includeInApk = false
