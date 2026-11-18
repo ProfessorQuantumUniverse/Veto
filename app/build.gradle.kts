@@ -17,8 +17,8 @@ android {
         applicationId = "com.quantum_prof.vtscansuite"
         minSdk = 30
         targetSdk = 36
-        versionCode = 5
-        versionName = "2.3"
+        versionCode = 6
+        versionName = "3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
