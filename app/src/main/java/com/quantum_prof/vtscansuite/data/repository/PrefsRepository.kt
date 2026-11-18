@@ -29,6 +29,8 @@ class PrefsRepository @Inject constructor(
 
     private val showHelp = booleanPreferencesKey("show_help_icons")
 
+    private val askBeforeUpload = booleanPreferencesKey("ask_before_upload")
+
     /**
      * Liefert den API-Key im Klartext (nur im Speicher). Solange [migrateLegacyKey] noch
      * nicht gelaufen ist, wird ersatzweise der alte Klartext-Wert gelesen, damit ein
@@ -41,6 +43,23 @@ class PrefsRepository @Inject constructor(
     /** Ob auf der Ergebnisseite die Hilfe-Icons angezeigt werden (Default: an). */
     val showHelpFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[showHelp] ?: true
+    }
+
+    /**
+     * Ob vor jedem Upload einer unbekannten Datei zurückgefragt wird (Default: an).
+     *
+     * Aus heißt: eine Datei, die VirusTotal nachweislich nicht kennt, wird direkt
+     * hochgeladen. Die Einstellung liegt im "settings"-DataStore und ist damit aus Backups
+     * und der Geräteübertragung ausgenommen – auf einem neuen Gerät wird also wieder gefragt.
+     */
+    val askBeforeUploadFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[askBeforeUpload] ?: true
+    }
+
+    suspend fun setAskBeforeUpload(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[askBeforeUpload] = enabled
+        }
     }
 
     suspend fun saveApiKey(key: String) {

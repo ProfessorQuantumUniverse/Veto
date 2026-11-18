@@ -49,6 +49,24 @@ object ScanNotifications {
         return builder.build()
     }
 
+    /**
+     * Der Scan wartet auf die Upload-Zustimmung des Nutzers. Der Vordergrunddienst läuft
+     * weiter, darf aber keinen laufenden Fortschritt vortäuschen.
+     */
+    fun buildAwaitingConsent(context: Context, label: String): Notification =
+        NotificationCompat.Builder(context, CHANNEL_PROGRESS)
+            .setSmallIcon(R.drawable.ic_scan_notification)
+            .setContentTitle("Waiting for your confirmation")
+            .setContentText(
+                if (label.isBlank()) "Open Veto to continue the scan"
+                else "$label is unknown to VirusTotal. Open Veto to decide."
+            )
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(openAppIntent(context, requestCode = 0))
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .build()
+
     fun showResult(context: Context, title: String, text: String) {
         val notif = NotificationCompat.Builder(context, CHANNEL_RESULT)
             .setSmallIcon(R.drawable.ic_scan_notification)

@@ -3,6 +3,7 @@ package com.quantum_prof.vtscansuite.di
 
 import com.quantum_prof.vtscansuite.BuildConfig
 import com.quantum_prof.vtscansuite.data.remote.VTScanApiService
+import com.quantum_prof.vtscansuite.data.remote.VtApiKeyGuard
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -36,6 +37,9 @@ object NetworkModule {
             .connectTimeout(60, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(120, TimeUnit.SECONDS) // Uploads können dauern
+            // Netzwerk-Interceptor: der API-Schlüssel verlässt das Gerät nur in Richtung
+            // virustotal.com – auch über jeden Redirect-Hop hinweg.
+            .addNetworkInterceptor(VtApiKeyGuard())
 
         // Nur in Debug-Builds mitloggen: in einem Release-Build landete sonst der
         // "x-apikey"-Header des Nutzers im Logcat (und damit in jedem Bug-Report).

@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Done
@@ -69,6 +70,7 @@ import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -124,6 +126,7 @@ import com.quantum_prof.vtscansuite.ui.theme.fadeThrough
 import com.quantum_prof.vtscansuite.ui.util.HapticType
 import com.quantum_prof.vtscansuite.ui.util.VT_API_KEY_URL
 import com.quantum_prof.vtscansuite.ui.util.formatEpochSeconds
+import com.quantum_prof.vtscansuite.ui.util.formatFileSize
 import com.quantum_prof.vtscansuite.ui.util.openUrl
 import com.quantum_prof.vtscansuite.ui.util.pressScale
 import com.quantum_prof.vtscansuite.ui.util.scaleOnPress
@@ -157,7 +160,14 @@ fun DashboardScreen(
     onNavigateToResults: (FileReportResponse, String) -> Unit,
     onDismissError: () -> Unit,
     showHelp: Boolean,
-    onSetShowHelp: (Boolean) -> Unit
+    onSetShowHelp: (Boolean) -> Unit,
+    /** Gibt den Upload genau dieser einen Datei frei. */
+    onConfirmUpload: () -> Unit = {},
+    /** Bricht den Scan ab, ohne die Datei hochzuladen. */
+    onDeclineUpload: () -> Unit = {},
+    /** Ob vor jedem Upload zurückgefragt wird (Einstellung). */
+    askBeforeUpload: Boolean = true,
+    onSetAskBeforeUpload: (Boolean) -> Unit = {}
 ) {
     val view = LocalView.current
     var currentScreen by remember { mutableStateOf(DashboardSubScreen.Home) }
@@ -275,7 +285,9 @@ fun DashboardScreen(
                             triggerHaptic(view, HapticType.SUCCESS)
                         },
                         showHelp = showHelp,
-                        onSetShowHelp = onSetShowHelp
+                        onSetShowHelp = onSetShowHelp,
+                        askBeforeUpload = askBeforeUpload,
+                        onSetAskBeforeUpload = onSetAskBeforeUpload
                     )
                 }
             }
@@ -329,6 +341,61 @@ fun DashboardScreen(
                     )
                 }
             }
+        }
+
+        // 2a. UPLOAD-RÜCKFRAGE: VirusTotal kennt die Datei nicht. Ohne ausdrückliche
+        // Zustimmung verlässt sie das Gerät nicht – bei APKs fremder Entwickler ist das
+        // nicht nur Privatsache, sondern auch eine Frage der Rechte.
+        if (state is DashboardState.UploadConsent) {
+            val sizeText = formatFileSize(state.sizeBytes)
+            AlertDialog(
+                onDismissRequest = {
+                    triggerHaptic(view, HapticType.CLICK)
+                    onDeclineUpload()
+                },
+                icon = {
+                    Icon(
+                        imageVector = Icons.Default.CloudUpload,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                },
+                title = { Text("Upload to analyze?") },
+                text = {
+                    Text(
+                        buildString {
+                            append("VirusTotal has no report for ")
+                            append(state.label.ifBlank { "this file" })
+                            append(" ($sizeText), so analyzing it means uploading the whole file.\n\n")
+                            if (state.isInstalledApp) {
+                                append("This APK belongs to its developer, not to you. ")
+                            }
+                            append(
+                                "Uploaded files are shared with VirusTotal's security partners " +
+                                    "and cannot be withdrawn. Only upload what you are entitled to share."
+                            )
+                        },
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            triggerHaptic(view, HapticType.CLICK)
+                            onConfirmUpload()
+                        }
+                    ) { Text("Upload and scan") }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            triggerHaptic(view, HapticType.CLICK)
+                            onDeclineUpload()
+                        }
+                    ) { Text("Don't upload") }
+                },
+                shape = MaterialTheme.shapes.extraLarge
+            )
         }
 
         // 2. ERROR STATE DIALOG (Sehr sauber & abfangbar)
@@ -1206,7 +1273,7 @@ private fun SavedScanCard(
         stats.total > 0 -> e.safe to Icons.Default.GppGood
         else -> MaterialTheme.colorScheme.outline to Icons.Default.Shield
     }
-    val verdictText = if (flagged > 0) "$flagged/${stats.total} detections" else "Clean"
+    val verdictText = if (flagged > 0) "$flagged/${stats.total} detections" else "No detections"
 
     val interaction = remember { MutableInteractionSource() }
     val scale = pressScale(interaction)
@@ -1278,7 +1345,9 @@ fun SettingsScreen(
     apiKeySaved: Boolean,
     onSaveApiKey: (String) -> Unit,
     showHelp: Boolean,
-    onSetShowHelp: (Boolean) -> Unit
+    onSetShowHelp: (Boolean) -> Unit,
+    askBeforeUpload: Boolean = true,
+    onSetAskBeforeUpload: (Boolean) -> Unit = {}
 ) {
     val view = LocalView.current
     val context = LocalContext.current
@@ -1406,6 +1475,51 @@ fun SettingsScreen(
                     onCheckedChange = {
                         triggerHaptic(view, HapticType.CLICK)
                         onSetShowHelp(it)
+                    }
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Upload-Verhalten: die Rückfrage vor jedem Upload lässt sich abschalten.
+        Text(
+            "Uploads 🔐",
+            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.titleMedium
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Ask before uploading", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        if (askBeforeUpload) {
+                            "A file VirusTotal has never seen can only be analyzed by uploading it. " +
+                                "You get asked first, every time."
+                        } else {
+                            "Unknown files are uploaded straight away, without asking. Uploads are " +
+                                "shared with VirusTotal's partners and cannot be withdrawn."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (askBeforeUpload) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.error
+                    )
+                }
+                Switch(
+                    checked = askBeforeUpload,
+                    onCheckedChange = {
+                        triggerHaptic(view, HapticType.CLICK)
+                        onSetAskBeforeUpload(it)
                     }
                 )
             }

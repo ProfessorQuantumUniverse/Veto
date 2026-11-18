@@ -65,6 +65,7 @@ class MainActivity : ComponentActivity() {
                     val apiKey by viewModel.apiKey.collectAsState()
                     val savedScans by viewModel.savedScans.collectAsState()
                     val showHelp by viewModel.showHelp.collectAsState()
+                    val askBeforeUpload by viewModel.askBeforeUpload.collectAsState()
                     val context = LocalContext.current
 
                     // Deutliches Abschluss-Feedback, sobald ein Scan fertig ist (einmalig pro Wechsel)
@@ -128,7 +129,11 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onDismissError = { viewModel.resetState() },
                                 showHelp = showHelp,
-                                onSetShowHelp = { viewModel.setShowHelp(it) }
+                                onSetShowHelp = { viewModel.setShowHelp(it) },
+                                onConfirmUpload = { viewModel.confirmUpload() },
+                                onDeclineUpload = { viewModel.declineUpload() },
+                                askBeforeUpload = askBeforeUpload,
+                                onSetAskBeforeUpload = { viewModel.setAskBeforeUpload(it) }
                             )
                         }
                     }

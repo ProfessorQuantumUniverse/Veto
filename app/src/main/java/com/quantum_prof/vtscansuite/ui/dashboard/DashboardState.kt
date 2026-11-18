@@ -14,4 +14,14 @@ sealed interface DashboardState {
     ) : DashboardState
     data class Success(val report: FileReportResponse, val label: String = "") : DashboardState
     data class Error(val errorMsg: String, val isRateLimit: Boolean = false) : DashboardState
+
+    /**
+     * VirusTotal kennt die Datei nicht. Für eine Analyse müsste sie vollständig hochgeladen
+     * werden – der Scan wartet auf die Entscheidung des Nutzers.
+     */
+    data class UploadConsent(
+        val label: String,
+        val sizeBytes: Long,
+        val isInstalledApp: Boolean
+    ) : DashboardState
 }

@@ -3,9 +3,12 @@ package com.quantum_prof.vtscansuite.data.repository
 
 import android.util.Base64
 import com.quantum_prof.vtscansuite.data.model.FileReportResponse
+import com.quantum_prof.vtscansuite.data.remote.PollSchedule
 import com.quantum_prof.vtscansuite.data.remote.ProgressRequestBody
 import com.quantum_prof.vtscansuite.data.remote.RateLimitException
 import com.quantum_prof.vtscansuite.data.remote.VTScanApiService
+import com.quantum_prof.vtscansuite.data.remote.VtApiKeyGuard
+import com.quantum_prof.vtscansuite.data.remote.VtHttpException
 import com.quantum_prof.vtscansuite.domain.repository.ProgressCallback
 import com.quantum_prof.vtscansuite.domain.repository.ScanPhase
 import com.quantum_prof.vtscansuite.domain.repository.VirusTotalRepository
@@ -13,6 +16,7 @@ import kotlinx.coroutines.delay
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
+import retrofit2.Response
 import java.io.File
 import java.security.MessageDigest
 import javax.inject.Inject
@@ -23,10 +27,16 @@ class VirusTotalRepositoryImpl @Inject constructor(
 ) : VirusTotalRepository {
 
     private val sizeLimit32MB = 32 * 1024 * 1024 // 32 Megabytes
-    private val pollIntervalMs = 15_000L            // ~4/min, respektiert das Free-Tier-Limit
     private val analysisTimeoutMs = 6 * 60_000L     // bis zu 6 Minuten auf den Abschluss warten
-    private val populateRetries = 10                // danach den Report nachladen, bis Ergebnisse da sind
-    private val populateIntervalMs = 6_000L
+
+    // Statusabfragen beginnen im Free-Tier-Takt und werden dann seltener (siehe PollSchedule).
+    private val analysisPollInitialMs = 15_000L
+    private val analysisPollMaxMs = 75_000L
+
+    // Danach den Report nachladen, bis die Engine-Ergebnisse tatsächlich da sind.
+    private val populateRetries = 5
+    private val populateInitialMs = 5_000L
+    private val populateMaxMs = 30_000L
 
     override suspend fun getFileReport(apiKey: String, hash: String): Result<FileReportResponse> {
         return try {
@@ -78,6 +88,13 @@ class VirusTotalRepositoryImpl @Inject constructor(
                     return Result.failure(httpError(urlResponse.code(), "Could not obtain an upload URL"))
                 }
                 val uploadUrl = urlResponse.body()!!.data
+                // Die Ziel-URL kommt aus einer API-Antwort. Vor dem ersten Byte prüfen, dass
+                // sie wirklich zu VirusTotal gehört – sonst ginge der API-Schlüssel mit.
+                if (!VtApiKeyGuard.isVirusTotalHttps(uploadUrl)) {
+                    return Result.failure(
+                        Exception("VirusTotal returned an upload address outside virustotal.com. Nothing was uploaded.")
+                    )
+                }
                 api.uploadFileToUrl(uploadUrl, apiKey, body)
             }
 
@@ -136,7 +153,8 @@ class VirusTotalRepositoryImpl @Inject constructor(
 
     /**
      * Pollt /analyses/{id} bis der Status "completed" ist (oder das Zeitlimit erreicht ist).
-     * Rate-Limit-Antworten (429) verbrauchen kein Zeitbudget unnötig – es wird einfach weiter gewartet.
+     * Der Abstand zwischen den Abfragen wächst ([PollSchedule]), und bei einem Rate-Limit
+     * wird zusätzlich so lange gewartet, wie VirusTotal es per "Retry-After" vorgibt.
      * Liefert (falls vorhanden) die url_info.id aus der Analyse-Antwort zurück.
      */
     private suspend fun awaitAnalysisCompletion(
@@ -145,24 +163,34 @@ class VirusTotalRepositoryImpl @Inject constructor(
         onProgress: ProgressCallback
     ): String? {
         val deadline = System.currentTimeMillis() + analysisTimeoutMs
+        val schedule = PollSchedule(analysisPollInitialMs, analysisPollMaxMs)
         var urlInfoId: String? = null
         while (System.currentTimeMillis() < deadline) {
             onProgress(ScanPhase.ANALYZING, null)
-            delay(pollIntervalMs.milliseconds)
+            delay(schedule.nextDelayMs().milliseconds)
             val response = runCatching { api.getAnalysisReport(apiKey, analysisId) }.getOrNull()
-            if (response != null) {
-                if (response.code() == 429) continue // Rate-Limit: einfach weiter warten
-                val body = response.body()
-                if (response.isSuccessful && body != null) {
-                    urlInfoId = body.meta?.urlInfo?.id ?: urlInfoId
-                    if (body.data.attributes.status == "completed") {
-                        return urlInfoId
-                    }
+                ?: continue
+            if (response.code() == 429) {
+                // Rate-Limit: nicht sofort erneut fragen.
+                response.retryAfterMs()?.let { delay(it.milliseconds) }
+                continue
+            }
+            val body = response.body()
+            if (response.isSuccessful && body != null) {
+                urlInfoId = body.meta?.urlInfo?.id ?: urlInfoId
+                if (body.data.attributes.status == "completed") {
+                    return urlInfoId
                 }
             }
         }
         return urlInfoId
     }
+
+    /** Wartezeit aus dem "Retry-After"-Header (nur das Sekunden-Format, das VirusTotal sendet). */
+    private fun Response<*>.retryAfterMs(): Long? =
+        headers()["Retry-After"]?.trim()?.toLongOrNull()
+            ?.coerceIn(0, 120)
+            ?.times(1_000)
 
     /**
      * Lädt den Report (Datei oder URL) wiederholt nach, bis Engine-Ergebnisse vorhanden sind.
@@ -177,11 +205,12 @@ class VirusTotalRepositoryImpl @Inject constructor(
         onProgress: ProgressCallback
     ): Result<FileReportResponse> {
         var last = getReport(apiKey, id, isUrl)
+        val schedule = PollSchedule(populateInitialMs, populateMaxMs, factor = 1.8)
         var tries = 0
         while (tries < populateRetries) {
             if (last.getOrNull().isPopulated()) return last
             onProgress(ScanPhase.ANALYZING, null) // VirusTotal stellt das Ergebnis noch fertig
-            delay(populateIntervalMs.milliseconds)
+            delay(schedule.nextDelayMs().milliseconds)
             tries++
             last = getReport(apiKey, id, isUrl)
         }
@@ -200,9 +229,13 @@ class VirusTotalRepositoryImpl @Inject constructor(
         return attrs.lastAnalysisResults.isNotEmpty() || attrs.lastAnalysisStats.total > 0
     }
 
-    /** Bildet HTTP-Fehlercodes auf Exceptions ab – 429 wird zum spezifischen Rate-Limit-Hinweis. */
+    /**
+     * Bildet HTTP-Fehlercodes auf Exceptions ab – 429 wird zum spezifischen Rate-Limit-Hinweis.
+     * Alles andere behält seinen Status-Code, damit die Aufrufer ein echtes "nicht gefunden"
+     * (404) von einem Fehlschlag unterscheiden können.
+     */
     private fun httpError(code: Int, context: String): Exception =
-        if (code == 429) RateLimitException() else Exception("$context (code $code)")
+        if (code == 429) RateLimitException() else VtHttpException(code, "$context (code $code)")
 
     private fun calculateSha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")

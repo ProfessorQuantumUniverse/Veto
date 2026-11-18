@@ -16,6 +16,7 @@ import com.quantum_prof.vtscansuite.domain.repository.ScanPhase
 import com.quantum_prof.vtscansuite.domain.repository.VirusTotalRepository
 import com.quantum_prof.vtscansuite.domain.usecase.HashFileUseCase
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -40,6 +41,18 @@ sealed interface ScanState {
     ) : ScanState
     data class Success(val report: FileReportResponse, val label: String) : ScanState
     data class Error(val message: String, val label: String, val isRateLimit: Boolean = false) : ScanState
+
+    /**
+     * VirusTotal kennt die Datei nicht – für eine Analyse müsste sie vollständig hochgeladen
+     * werden. Der Scan wartet in diesem Zustand auf die Entscheidung des Nutzers
+     * ([ScanManager.confirmUpload] / [ScanManager.declineUpload]); ohne Zustimmung verlässt
+     * kein Byte das Gerät.
+     */
+    data class UploadConsent(
+        val label: String,
+        val sizeBytes: Long,
+        val subject: UploadSubject
+    ) : ScanState
 }
 
 /**
@@ -66,12 +79,26 @@ class ScanManager @Inject constructor(
 
     private var job: Job? = null
 
+    /** Offene Upload-Rückfrage; wird von der UI mit true/false beantwortet. */
+    @Volatile
+    private var uploadDecision: CompletableDeferred<Boolean>? = null
+
+    init {
+        // Kopien ausgewählter Dateien werden nach jedem Scan gelöscht. Stirbt der Prozess
+        // mitten im Scan, bleiben sie liegen – beim Start aufräumen (hier läuft noch kein Scan).
+        scope.launch {
+            runCatching {
+                File(context.cacheDir, CACHE_DIR).listFiles()?.forEach { it.delete() }
+            }
+        }
+    }
+
     fun scanUrl(url: String) = start(url.trim()) { key, onProgress ->
         repository.scanUrl(key, url, onProgress)
     }
 
     fun scanApp(apkFile: File, name: String) = start(name) { key, onProgress ->
-        analyzeFile(key, apkFile, onProgress, deleteAfter = false)
+        analyzeFile(key, apkFile, UploadSubject.INSTALLED_APP, onProgress, deleteAfter = false)
     }
 
     fun scanUri(uri: Uri) {
@@ -79,8 +106,18 @@ class ScanManager @Inject constructor(
         start(name) { key, onProgress ->
             onProgress(ScanPhase.CHECKING, null)
             val temp = copyToCache(uri, name)
-            analyzeFile(key, temp, onProgress, deleteAfter = true)
+            analyzeFile(key, temp, UploadSubject.PICKED_FILE, onProgress, deleteAfter = true)
         }
+    }
+
+    /** Der Nutzer hat dem Upload dieser einen Datei zugestimmt. */
+    fun confirmUpload() {
+        uploadDecision?.complete(true)
+    }
+
+    /** Der Nutzer will diese Datei nicht hochladen – der Scan endet ohne Upload. */
+    fun declineUpload() {
+        uploadDecision?.complete(false)
     }
 
     /**
@@ -106,23 +143,85 @@ class ScanManager @Inject constructor(
         }
     }
 
+    /**
+     * Erst den Hash nachschlagen, dann entscheiden:
+     *
+     * - Bericht mit Engine-Ergebnissen vorhanden → anzeigen, die Datei bleibt auf dem Gerät.
+     * - Verifizierte 404-Antwort → VirusTotal kennt die Datei nicht. Erst **nachfragen**,
+     *   dann hochladen.
+     * - Jeder andere Fehlschlag (Rate-Limit, ungültiger Schlüssel, Serverfehler, kein Netz)
+     *   → Fehler melden. Es wird nichts hochgeladen.
+     */
     private suspend fun analyzeFile(
         key: String,
         file: File,
+        subject: UploadSubject,
         onProgress: ProgressCallback,
         deleteAfter: Boolean
     ): Result<FileReportResponse> {
         return try {
             onProgress(ScanPhase.CHECKING, null)
             val hash = hashFileUseCase(file)
-            val known = repository.getFileReport(key, hash).getOrNull()
-            if (known != null && known.data.attributes.lastAnalysisResults.isNotEmpty()) {
-                Result.success(known)
-            } else {
-                repository.uploadFile(key, file, onProgress)
+            val lookup = repository.getFileReport(key, hash)
+            val known = lookup.getOrNull()
+            val error = lookup.exceptionOrNull()
+            when {
+                // Bekannte Datei mit Ergebnissen: nichts verlässt das Gerät.
+                known != null && known.data.attributes.lastAnalysisResults.isNotEmpty() ->
+                    Result.success(known)
+
+                // Fehlschlag, der *kein* verifiziertes "unbekannt" ist: niemals hochladen.
+                error != null && !UploadGate.isVerifiedUnknown(error) ->
+                    Result.failure(lookupFailure(error))
+
+                // Unbekannt (404) oder Eintrag ohne Engine-Ergebnisse: nur ein Upload bringt
+                // ein Ergebnis. Zurückfragen, sofern der Nutzer das nicht abgeschaltet hat.
+                else -> {
+                    val mustAsk = prefs.askBeforeUploadFlow.first()
+                    if (mustAsk && !awaitUploadConsent(file, subject)) {
+                        Result.failure(UploadDeclinedException())
+                    } else {
+                        repository.uploadFile(key, file, onProgress)
+                    }
+                }
             }
         } finally {
             if (deleteAfter) runCatching { file.delete() }
+        }
+    }
+
+    /** Macht aus einem fehlgeschlagenen Lookup eine Meldung, die klarstellt: nichts ging raus. */
+    private fun lookupFailure(error: Throwable): Throwable = when (error) {
+        is RateLimitException -> error
+        else -> Exception(
+            (error.localizedMessage ?: "The hash lookup failed.") + " Nothing was uploaded."
+        )
+    }
+
+    /**
+     * Hält den Scan an und fragt die Zustimmung für genau diesen Upload ab. Kein erneuter
+     * Lookup, der Scan wartet einfach an dieser Stelle.
+     */
+    private suspend fun awaitUploadConsent(file: File, subject: UploadSubject): Boolean {
+        val decision = CompletableDeferred<Boolean>()
+        uploadDecision = decision
+        _state.value = ScanState.UploadConsent(
+            label = currentLabel.ifBlank { file.name },
+            sizeBytes = file.length(),
+            subject = subject
+        )
+        return try {
+            val granted = decision.await()
+            if (granted) {
+                // Sofort zurück in den Laufzustand: das Hashen einer großen APK dauert,
+                // und so lange soll der Dialog nicht stehen bleiben.
+                _state.value = ScanState.Running(
+                    ScanPhase.UPLOADING, 0f, System.currentTimeMillis(), currentLabel
+                )
+            }
+            granted
+        } finally {
+            uploadDecision = null
         }
     }
 
@@ -150,7 +249,9 @@ class ScanManager @Inject constructor(
             _state.value = result.fold(
                 onSuccess = { ScanState.Success(it, label) },
                 onFailure = {
-                    ScanState.Error(
+                    // Eine abgelehnte Upload-Rückfrage ist kein Fehler, sondern ein Abbruch.
+                    if (it is UploadDeclinedException) ScanState.Idle
+                    else ScanState.Error(
                         message = it.localizedMessage ?: "Scan failed.",
                         label = label,
                         isRateLimit = it is RateLimitException
@@ -162,6 +263,12 @@ class ScanManager @Inject constructor(
 
     /** Ergebnis als gesehen markieren (nur wenn gerade kein Scan läuft). */
     fun acknowledge() {
+        // Wird die Upload-Rückfrage weggetippt, gilt das als Ablehnung – sonst würde der
+        // wartende Scan für immer hängen.
+        if (_state.value is ScanState.UploadConsent) {
+            declineUpload()
+            return
+        }
         if (_state.value !is ScanState.Running) _state.value = ScanState.Idle
     }
 
@@ -194,7 +301,7 @@ class ScanManager @Inject constructor(
      * Cache-Verzeichnisses landen.
      */
     private fun copyToCache(uri: Uri, name: String): File {
-        val dir = File(context.cacheDir, "scan_uploads").apply { mkdirs() }
+        val dir = File(context.cacheDir, CACHE_DIR).apply { mkdirs() }
         val tempFile = File(dir, sanitizeFileName(name))
         context.contentResolver.openInputStream(uri)?.use { input ->
             tempFile.outputStream().use { output -> input.copyTo(output) }
@@ -209,5 +316,10 @@ class ScanManager @Inject constructor(
             .trimStart('.')
             .take(120)
         return base.ifBlank { "upload" }
+    }
+
+    private companion object {
+        /** Unterverzeichnis im Cache für die temporären Kopien ausgewählter Dateien. */
+        const val CACHE_DIR = "scan_uploads"
     }
 }

@@ -1,6 +1,7 @@
 // scan/ScanService.kt
 package com.quantum_prof.vtscansuite.scan
 
+import android.app.Notification
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -43,6 +44,9 @@ class ScanService : Service() {
             scanManager.state.collect { state ->
                 when (state) {
                     is ScanState.Running -> updateOngoing(state)
+                    // Der Scan wartet auf die Upload-Entscheidung: Dienst bleibt stehen,
+                    // die Meldung sagt aber, worauf gewartet wird.
+                    is ScanState.UploadConsent -> awaitConsent(state)
                     is ScanState.Success -> {
                         ScanNotifications.showResult(this@ScanService, resultTitle(state), resultText(state))
                         finish()
@@ -71,20 +75,34 @@ class ScanService : Service() {
     }
 
     private fun updateOngoing(state: ScanState.Running) {
+        postOngoing(ScanNotifications.buildOngoing(this, state.phase, state.progress, state.label))
+    }
+
+    private fun awaitConsent(state: ScanState.UploadConsent) {
+        postOngoing(ScanNotifications.buildAwaitingConsent(this, state.label))
+    }
+
+    /**
+     * Einziger notify()-Aufruf des Dienstes. Eine verweigerte Notification-Berechtigung
+     * darf den laufenden Scan nicht abbrechen, deshalb runCatching.
+     */
+    private fun postOngoing(notification: Notification) {
         runCatching {
             NotificationManagerCompat.from(this).notify(
                 ScanNotifications.ONGOING_ID,
-                ScanNotifications.buildOngoing(this, state.phase, state.progress, state.label)
+                notification
             )
         }
     }
 
     private fun resultTitle(state: ScanState.Success): String {
         val stats = state.report.data.attributes.lastAnalysisStats
+        // Kein Emoji, kein Gedankenstrich, und kein "clean": null Treffer ist eine Aussage
+        // über die Engines, nicht über die Datei.
         return when {
-            stats.malicious > 0 -> "⚠️ Threat detected"
+            stats.malicious > 0 -> "Threat detected"
             stats.suspicious > 0 -> "Suspicious item"
-            else -> "Scan complete — clean"
+            else -> "Scan complete, no detections"
         }
     }
 

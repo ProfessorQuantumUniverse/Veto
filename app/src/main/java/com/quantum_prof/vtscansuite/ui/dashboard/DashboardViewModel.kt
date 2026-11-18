@@ -14,6 +14,7 @@ import com.quantum_prof.vtscansuite.domain.usecase.ExtractApkUseCase
 import com.quantum_prof.vtscansuite.domain.usecase.InstalledApp
 import com.quantum_prof.vtscansuite.scan.ScanManager
 import com.quantum_prof.vtscansuite.scan.ScanState
+import com.quantum_prof.vtscansuite.scan.UploadSubject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,6 +59,10 @@ class DashboardViewModel @Inject constructor(
     val showHelp: StateFlow<Boolean> = prefsRepository.showHelpFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
+    /** Rückfrage vor jedem Upload – an, solange der Nutzer sie nicht abgeschaltet hat. */
+    val askBeforeUpload: StateFlow<Boolean> = prefsRepository.askBeforeUploadFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
     init {
         loadInstalledApps()
     }
@@ -88,7 +93,18 @@ class DashboardViewModel @Inject constructor(
         }
     }
 
+    fun setAskBeforeUpload(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            prefsRepository.setAskBeforeUpload(enabled)
+        }
+    }
+
     fun resetState() = scanManager.acknowledge()
+
+    /** Upload dieser einen Datei freigeben bzw. ablehnen. */
+    fun confirmUpload() = scanManager.confirmUpload()
+
+    fun declineUpload() = scanManager.declineUpload()
 
     fun scanUrl(url: String) {
         if (url.isBlank()) return
@@ -129,6 +145,11 @@ class DashboardViewModel @Inject constructor(
         )
         is ScanState.Success -> DashboardState.Success(report, label)
         is ScanState.Error -> DashboardState.Error(message, isRateLimit)
+        is ScanState.UploadConsent -> DashboardState.UploadConsent(
+            label = label,
+            sizeBytes = sizeBytes,
+            isInstalledApp = subject == UploadSubject.INSTALLED_APP
+        )
     }
 
     private fun phaseMessage(phase: ScanPhase): String = when (phase) {

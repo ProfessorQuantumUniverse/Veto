@@ -225,7 +225,9 @@ private fun verdictStyleFor(verdict: Verdict, e: ExpressiveColors): VerdictStyle
     )
     Verdict.SAFE -> VerdictStyle(
         color = e.safe, container = e.safeContainer, onContainer = e.onSafeContainer,
-        icon = Icons.Default.GppGood, title = "Clean",
+        // Bewusst nicht "Clean": null Treffer heißt, dass keine Engine etwas gemeldet hat –
+        // nicht, dass die Datei geprüft und für sicher erklärt wurde.
+        icon = Icons.Default.GppGood, title = "No detections",
         subtitle = "No engine reported a threat."
     )
     Verdict.UNKNOWN -> VerdictStyle(
@@ -617,7 +619,7 @@ private fun VerdictGauge(
             Spacer(Modifier.height(4.dp))
             if (isSafe) {
                 Text("100%", fontSize = 30.sp, fontWeight = FontWeight.Black, color = style.onContainer)
-                Text("clean", style = MaterialTheme.typography.labelMedium, color = style.onContainer.copy(alpha = 0.7f))
+                Text("undetected", style = MaterialTheme.typography.labelMedium, color = style.onContainer.copy(alpha = 0.7f))
             } else if (verdict == Verdict.UNKNOWN) {
                 Text("–", fontSize = 34.sp, fontWeight = FontWeight.Black, color = style.onContainer)
             } else {
@@ -1271,7 +1273,7 @@ private fun shareReport(context: android.content.Context, report: FileReportResp
     val verdictText = when (verdict) {
         Verdict.MALICIOUS -> "MALICIOUS"
         Verdict.SUSPICIOUS -> "SUSPICIOUS"
-        Verdict.SAFE -> "CLEAN"
+        Verdict.SAFE -> "NO DETECTIONS"
         Verdict.UNKNOWN -> "NO VERDICT"
     }
     val text = buildString {
