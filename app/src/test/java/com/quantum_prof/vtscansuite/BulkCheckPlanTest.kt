@@ -24,7 +24,6 @@ class BulkCheckPlanTest {
     ) = InstalledApp(
         name = packageName,
         packageName = packageName,
-        icon = null,
         apkFile = File("/does/not/exist/$packageName.apk"),
         isSystem = isSystem,
         versionCode = versionCode,

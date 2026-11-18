@@ -97,7 +97,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // ... other dependencies
-    implementation("com.squareup.retrofit2:converter-kotlinx-serialization:3.0.0")
+    implementation("com.squareup.retrofit2:converter-kotlinx-serialization:2.11.0") // Hauptversion muss zu Retrofit passen
 
     implementation("androidx.datastore:datastore-preferences:1.2.1")
     // Falls du zusätzlich Proto DataStore nutzt:

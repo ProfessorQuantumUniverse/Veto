@@ -60,7 +60,7 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val uiState by viewModel.uiState.collectAsState()
-                    val apps by viewModel.installedApps.collectAsState()
+                    val appList by viewModel.appList.collectAsState()
                     val clipboardUrl by viewModel.clipboardUrl.collectAsState()
                     val apiKey by viewModel.apiKey.collectAsState()
                     val savedScans by viewModel.savedScans.collectAsState()
@@ -70,6 +70,8 @@ class MainActivity : ComponentActivity() {
                     val bulkCheck by viewModel.bulkCheck.collectAsState()
                     val requestsUsedToday by viewModel.requestsUsedToday.collectAsState()
                     val showSystemApps by viewModel.showSystemApps.collectAsState()
+                    val hideWebApks by viewModel.hideWebApks.collectAsState()
+                    val webApkCount by viewModel.webApkCount.collectAsState()
                     val context = LocalContext.current
 
                     // Deutliches Abschluss-Feedback, sobald ein Scan fertig ist (einmalig pro Wechsel)
@@ -117,11 +119,15 @@ class MainActivity : ComponentActivity() {
                             )
                             TopScreen.Dashboard -> DashboardScreen(
                                 state = uiState,
-                                installedApps = apps,
+                                appList = appList,
                                 clipboardUrl = clipboardUrl,
                                 apiKeySaved = apiKey.isNotEmpty(),
                                 savedScans = savedScans,
                                 onAppSelected = { app -> viewModel.scanApp(app) },
+                                loadIcon = viewModel.loadAppIcon,
+                                hideWebApks = hideWebApks,
+                                onSetHideWebApks = { viewModel.setHideWebApks(it) },
+                                webApkCount = webApkCount,
                                 onManualScan = { url -> viewModel.scanUrl(url) },
                                 onCustomFileSelected = { uri -> viewModel.scanUri(uri) },
                                 onSaveApiKey = { newKey -> viewModel.saveApiKey(newKey) },
@@ -145,7 +151,8 @@ class MainActivity : ComponentActivity() {
                                 onSetShowSystemApps = { viewModel.setShowSystemApps(it) },
                                 onCheckAllHashes = { viewModel.checkAllHashes() },
                                 onCancelBulkCheck = { viewModel.cancelBulkCheck() },
-                                onAcknowledgeBulkCheck = { viewModel.acknowledgeBulkCheck() }
+                                onAcknowledgeBulkCheck = { viewModel.acknowledgeBulkCheck() },
+                                onRefreshApps = { viewModel.refreshApps() }
                             )
                         }
                     }
@@ -156,9 +163,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        checkClipboardForUrl()
         // Ergebnis-Notification entfernen, sobald der Nutzer in der App ist
         ScanNotifications.cancelResult(this)
+    }
+
+    /**
+     * Die Zwischenablage erst lesen, wenn das Fenster den Fokus hat. In onResume ist er
+     * noch nicht da, und Android verweigert den Zugriff dann wortlos ("application is not
+     * in focus") – der Vorschlag aus der Zwischenablage blieb deshalb manchmal aus.
+     */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) checkClipboardForUrl()
     }
 
     private fun requestNotificationPermissionIfNeeded() {

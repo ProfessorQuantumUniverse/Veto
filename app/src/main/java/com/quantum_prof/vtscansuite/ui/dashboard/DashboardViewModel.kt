@@ -13,6 +13,8 @@ import com.quantum_prof.vtscansuite.data.repository.AppScanCacheRepository
 import com.quantum_prof.vtscansuite.data.repository.PrefsRepository
 import com.quantum_prof.vtscansuite.data.repository.SavedScansRepository
 import com.quantum_prof.vtscansuite.domain.repository.ScanPhase
+import androidx.compose.ui.graphics.ImageBitmap
+import com.quantum_prof.vtscansuite.domain.usecase.AppIconLoader
 import com.quantum_prof.vtscansuite.domain.usecase.ExtractApkUseCase
 import com.quantum_prof.vtscansuite.domain.usecase.InstalledApp
 import com.quantum_prof.vtscansuite.scan.AppCheckManager
@@ -22,12 +24,16 @@ import com.quantum_prof.vtscansuite.scan.ScanState
 import com.quantum_prof.vtscansuite.scan.UploadSubject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -40,6 +46,7 @@ class DashboardViewModel @Inject constructor(
     private val appScanCache: AppScanCacheRepository,
     private val apiBudget: ApiBudgetRepository,
     private val extractApkUseCase: ExtractApkUseCase,
+    private val appIconLoader: AppIconLoader,
     private val prefsRepository: PrefsRepository,
     private val savedScansRepository: SavedScansRepository
 ) : ViewModel() {
@@ -49,19 +56,41 @@ class DashboardViewModel @Inject constructor(
         .map { it.toDashboardState() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardState.Idle)
 
-    /** Die Liste folgt der Einstellung, ob System-Apps sichtbar sind. */
-    val installedApps: StateFlow<List<InstalledApp>> = prefsRepository.showSystemAppsFlow
-        .map { includeSystem ->
-            withContext(Dispatchers.IO) {
-                runCatching { extractApkUseCase.getInstalledApps(includeSystem) }
-                    .getOrDefault(emptyList())
+    /**
+     * Die Liste folgt den Einstellungen (System-Apps, WebAPKs) und meldet dabei einen
+     * eigenen Ladezustand – sonst stünde beim Umschalten sekundenlang die alte Liste da.
+     */
+    /** Hochzählen lädt die Liste neu (Ziehen zum Aktualisieren). */
+    private val refreshTrigger = MutableStateFlow(0)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val appList: StateFlow<AppListState> = combine(
+        prefsRepository.showSystemAppsFlow,
+        prefsRepository.hideWebApksFlow,
+        refreshTrigger
+    ) { includeSystem, hideWebApks, _ -> includeSystem to hideWebApks }
+        .flatMapLatest { (includeSystem, hideWebApks) ->
+            flow {
+                emit(AppListState.Loading)
+                val apps = withContext(Dispatchers.IO) {
+                    runCatching { extractApkUseCase.getInstalledApps(includeSystem, hideWebApks) }
+                        .getOrDefault(emptyList())
+                }
+                emit(AppListState.Ready(apps))
             }
         }
-        .onEach { apps ->
-            // Deinstallierte Apps aus dem Ergebnis-Cache werfen.
-            if (apps.isNotEmpty()) appCheckManager.forgetUninstalled(apps.map { it.packageName }.toSet())
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppListState.Loading)
+
+    /** Lädt ein App-Icon, sobald eine Zeile sichtbar wird. */
+    val loadAppIcon: suspend (String) -> ImageBitmap? = appIconLoader::load
+
+    /** Wie viele WebAPK-Verknüpfungen installiert sind (Text in den Einstellungen). */
+    val webApkCount: StateFlow<Int> = flow { emit(extractApkUseCase.countWebApks()) }
+        .flowOn(Dispatchers.IO)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val hideWebApks: StateFlow<Boolean> = prefsRepository.hideWebApksFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
     /** Gemerkte Hash-Ergebnisse, nach Paketnamen. */
     val appRecords: StateFlow<Map<String, AppScanRecord>> = appScanCache.records
@@ -100,6 +129,13 @@ class DashboardViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
     init {
+        // Ergebnisse zu deinstallierten Apps verwerfen. Bewusst über *alle* Pakete, nicht
+        // über die gefilterte Liste: sonst flöge beim Ausblenden von System-Apps deren
+        // Ergebnis gleich mit.
+        viewModelScope.launch(Dispatchers.IO) {
+            appCheckManager.forgetUninstalled(extractApkUseCase.installedPackageNames())
+        }
+
         // Das Ergebnis einer einzeln gestarteten App-Prüfung landet im selben Cache wie
         // der Sammellauf – sonst stünde in der Liste weiter "unbekannt".
         viewModelScope.launch {
@@ -110,6 +146,11 @@ class DashboardViewModel @Inject constructor(
                         appCheckManager.recordSingleResult(app, state.report)
                         pendingSingleCheck = null
                     }
+
+                    // Dieser Zustand wird nur nach einer bestätigten 404 erreicht: die App
+                    // ist VirusTotal unbekannt. Das gehört in die Liste, egal wie der
+                    // Nutzer die Upload-Frage beantwortet.
+                    is ScanState.UploadConsent -> appCheckManager.recordUnknown(app)
 
                     is ScanState.Error -> pendingSingleCheck = null
                     else -> Unit
@@ -161,7 +202,18 @@ class DashboardViewModel @Inject constructor(
     }
 
     /** Sammellauf über alle sichtbaren Nicht-System-Apps. */
-    fun checkAllHashes() = appCheckManager.checkAll(installedApps.value)
+    fun checkAllHashes() = appCheckManager.checkAll(appList.value.appsOrEmpty)
+
+    /** Liste neu einlesen, etwa nachdem eine App installiert oder entfernt wurde. */
+    fun refreshApps() {
+        refreshTrigger.value++
+    }
+
+    fun setHideWebApks(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            prefsRepository.setHideWebApks(enabled)
+        }
+    }
 
     fun cancelBulkCheck() = appCheckManager.cancel()
 

@@ -22,9 +22,14 @@ interface VirusTotalRepository {
     /** Lädt einen vorhandenen Bericht (Datei oder URL) anhand seiner ID neu. */
     suspend fun getReport(apiKey: String, id: String, isUrl: Boolean): Result<FileReportResponse>
 
+    /**
+     * [knownHash] spart das zweite vollständige Lesen der Datei: der Aufrufer hat den
+     * SHA-256 für den Lookup meist schon berechnet.
+     */
     suspend fun uploadFile(
         apiKey: String,
         file: File,
+        knownHash: String? = null,
         onProgress: ProgressCallback = { _, _ -> }
     ): Result<FileReportResponse>
 

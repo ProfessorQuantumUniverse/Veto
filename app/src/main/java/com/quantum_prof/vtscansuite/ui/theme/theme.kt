@@ -18,6 +18,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
@@ -233,6 +234,23 @@ fun auroraBrush(): Brush {
     return Brush.linearGradient(
         colors = listOf(cs.primary, cs.tertiary, cs.secondary)
     )
+}
+
+/**
+ * Schrift- und Icon-Farbe für Flächen mit [auroraBrush].
+ *
+ * Der Verlauf kommt aus dem Farbschema, und das ist ab Android 12 dynamisch: er richtet
+ * sich nach dem Hintergrundbild des Nutzers. Weiße Schrift war deshalb auf hellen
+ * Geräte-Paletten kaum zu lesen. Entschieden wird über die Helligkeit des Verlaufs: der
+ * Schwellwert 0,179 ist der Punkt, an dem Schwarz und Weiß gleich gut kontrastieren.
+ */
+@Composable
+fun onAuroraColor(): Color {
+    val cs = MaterialTheme.colorScheme
+    val luminance = listOf(cs.primary, cs.tertiary, cs.secondary)
+        .map { it.luminance() }
+        .average()
+    return if (luminance > 0.179f) Color.Black else Color.White
 }
 
 /** Weicher Verlauf für sichere Ergebnisse. */

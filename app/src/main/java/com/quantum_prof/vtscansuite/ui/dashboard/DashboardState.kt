@@ -2,6 +2,20 @@ package com.quantum_prof.vtscansuite.ui.dashboard
 
 import com.quantum_prof.vtscansuite.data.model.FileReportResponse
 import com.quantum_prof.vtscansuite.domain.repository.ScanPhase
+import com.quantum_prof.vtscansuite.domain.usecase.InstalledApp
+
+/**
+ * Zustand der App-Liste. Das Aufbauen dauert spürbar, deshalb ist "wird geladen" ein
+ * eigener Zustand – eine leere Liste bedeutet jetzt wirklich, dass nichts da ist.
+ */
+sealed interface AppListState {
+    data object Loading : AppListState
+    data class Ready(val apps: List<InstalledApp>) : AppListState
+}
+
+/** Die Apps, oder eine leere Liste solange noch geladen wird. */
+val AppListState.appsOrEmpty: List<InstalledApp>
+    get() = (this as? AppListState.Ready)?.apps ?: emptyList()
 
 sealed interface DashboardState {
     object Idle : DashboardState

@@ -41,5 +41,12 @@
             android:name=".scan.ScanService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- Hält den Sammellauf am Leben, wenn die App geschlossen wird. Startet nur,
+             wenn der Nutzer den Lauf selbst ausgelöst hat. -->
+        <service
+            android:name=".scan.AppCheckService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>

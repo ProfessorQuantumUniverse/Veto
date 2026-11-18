@@ -18,6 +18,7 @@ object ScanNotifications {
     const val CHANNEL_RESULT = "scan_result"
     const val ONGOING_ID = 1001
     const val RESULT_ID = 1002
+    const val APP_CHECK_ID = 1003
 
     fun ensureChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
@@ -66,6 +67,30 @@ object ScanNotifications {
             .setContentIntent(openAppIntent(context, requestCode = 0))
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
+
+    /**
+     * Fortschritt des Sammellaufs. Läuft minutenlang, deshalb mit Abbrechen-Aktion und
+     * ohne Ton.
+     */
+    fun buildAppCheck(
+        context: Context,
+        done: Int,
+        total: Int,
+        currentApp: String,
+        stopIntent: PendingIntent
+    ): Notification = NotificationCompat.Builder(context, CHANNEL_PROGRESS)
+        .setSmallIcon(R.drawable.ic_scan_notification)
+        .setContentTitle("Checking app hashes")
+        .setContentText(
+            if (total > 0) "${done + 1} of $total · $currentApp" else currentApp
+        )
+        .setProgress(total.coerceAtLeast(1), done, false)
+        .setOngoing(true)
+        .setOnlyAlertOnce(true)
+        .setContentIntent(openAppIntent(context, requestCode = 2))
+        .addAction(0, "Stop", stopIntent)
+        .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+        .build()
 
     fun showResult(context: Context, title: String, text: String) {
         val notif = NotificationCompat.Builder(context, CHANNEL_RESULT)

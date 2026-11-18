@@ -186,7 +186,7 @@ class ScanManager @Inject constructor(
                     if (mustAsk && !awaitUploadConsent(file, subject)) {
                         Result.failure(UploadDeclinedException())
                     } else {
-                        repository.uploadFile(key, file, onProgress)
+                        repository.uploadFile(key, file, knownHash = hash, onProgress = onProgress)
                     }
                 }
             }

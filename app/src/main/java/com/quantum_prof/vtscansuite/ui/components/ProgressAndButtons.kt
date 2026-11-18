@@ -47,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.quantum_prof.vtscansuite.ui.theme.auroraBrush
+import com.quantum_prof.vtscansuite.ui.theme.onAuroraColor
 import com.quantum_prof.vtscansuite.ui.util.HapticType
 import com.quantum_prof.vtscansuite.ui.util.triggerHaptic
 
@@ -125,7 +126,9 @@ fun GradientButton(
     enabled: Boolean = true,
     icon: ImageVector? = null,
     brush: Brush = auroraBrush(),
-    contentColor: Color = Color.White
+    // Nicht fest weiß: der Verlauf folgt ab Android 12 dem Hintergrundbild und kann hell
+    // genug sein, dass weiße Schrift darauf verschwindet.
+    contentColor: Color = onAuroraColor()
 ) {
     val view = LocalView.current
     val interaction = remember { MutableInteractionSource() }

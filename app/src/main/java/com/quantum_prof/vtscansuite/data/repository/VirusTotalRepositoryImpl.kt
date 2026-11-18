@@ -67,10 +67,13 @@ class VirusTotalRepositoryImpl @Inject constructor(
     override suspend fun uploadFile(
         apiKey: String,
         file: File,
+        knownHash: String?,
         onProgress: ProgressCallback
     ): Result<FileReportResponse> {
         return try {
-            val fileHash = calculateSha256(file)
+            // Der Aufrufer hat die Datei für den Lookup schon gehasht – eine große APK ein
+            // zweites Mal komplett zu lesen, wäre reine Verschwendung.
+            val fileHash = knownHash ?: calculateSha256(file)
 
             onProgress(ScanPhase.UPLOADING, 0f)
             val rawBody = file.asRequestBody("application/octet-stream".toMediaTypeOrNull())

@@ -1,6 +1,9 @@
 // scan/AppCheckManager.kt
 package com.quantum_prof.vtscansuite.scan
 
+import android.content.Context
+import android.content.Intent
+import androidx.core.content.ContextCompat
 import com.quantum_prof.vtscansuite.data.model.AppScanOutcome
 import com.quantum_prof.vtscansuite.data.model.AppScanRecord
 import com.quantum_prof.vtscansuite.data.model.FileReportResponse
@@ -11,6 +14,7 @@ import com.quantum_prof.vtscansuite.data.repository.PrefsRepository
 import com.quantum_prof.vtscansuite.domain.repository.VirusTotalRepository
 import com.quantum_prof.vtscansuite.domain.usecase.HashFileUseCase
 import com.quantum_prof.vtscansuite.domain.usecase.InstalledApp
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -75,6 +79,7 @@ sealed interface BulkCheckState {
  */
 @Singleton
 class AppCheckManager @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val repository: VirusTotalRepository,
     private val hashFileUseCase: HashFileUseCase,
     private val prefs: PrefsRepository,
@@ -112,6 +117,10 @@ class AppCheckManager @Inject constructor(
                 return@launch
             }
 
+            // Erst jetzt, wo wirklich gearbeitet wird: der Lauf soll das Schließen der App
+            // überleben, ein No-op-Lauf aber keine Benachrichtigung erzeugen.
+            startService()
+
             val batch = pending.take(allowance)
             var checked = 0
             var unknown = 0
@@ -125,44 +134,24 @@ class AppCheckManager @Inject constructor(
                 // Zwischen zwei Anfragen warten, aber nicht vor der ersten.
                 if (index > 0) delay(ApiBudgetRepository.MIN_INTERVAL_MS)
 
-                val hash = runCatching { hashFileUseCase(app.apkFile) }.getOrNull()
-                if (hash == null) {
-                    failed++
-                    continue
-                }
-
-                val lookup = repository.getFileReport(key, hash)
-                val error = lookup.exceptionOrNull()
-                when {
-                    lookup.isSuccess -> {
-                        val record = lookup.getOrNull().toRecord(app, hash)
-                        cache.put(record)
+                when (checkApp(key, app)) {
+                    CheckOutcome.KNOWN -> checked++
+                    CheckOutcome.FLAGGED -> {
                         checked++
-                        if (record.flagged > 0) flagged++
+                        flagged++
                     }
 
-                    UploadGate.isVerifiedUnknown(error) -> {
-                        cache.put(
-                            AppScanRecord(
-                                packageName = app.packageName,
-                                sha256 = hash,
-                                versionCode = app.versionCode,
-                                apkSize = app.apkSize,
-                                checkedAt = System.currentTimeMillis(),
-                                outcome = AppScanOutcome.UNKNOWN
-                            )
-                        )
+                    CheckOutcome.UNKNOWN -> {
                         checked++
                         unknown++
                     }
 
-                    error is RateLimitException -> {
+                    CheckOutcome.RATE_LIMITED -> {
                         stop = StopReason.RATE_LIMITED
                         break
                     }
 
-                    // Netz- oder Serverfehler: nichts merken, der nächste Lauf versucht es erneut.
-                    else -> failed++
+                    CheckOutcome.FAILED -> failed++
                 }
             }
 
@@ -175,6 +164,58 @@ class AppCheckManager @Inject constructor(
                 remainingApps = (pending.size - done).coerceAtLeast(0),
                 reason = stop
             )
+        }
+    }
+
+    /**
+     * Startet den Vordergrunddienst. Schlägt das fehl (etwa weil Android den Start aus dem
+     * Hintergrund verweigert), läuft der Scan trotzdem weiter, nur eben nur solange der
+     * Prozess lebt.
+     */
+    private fun startService() {
+        runCatching {
+            ContextCompat.startForegroundService(context, Intent(context, AppCheckService::class.java))
+        }
+    }
+
+    /** Ergebnis einer einzelnen Hash-Prüfung. */
+    private enum class CheckOutcome { KNOWN, FLAGGED, UNKNOWN, RATE_LIMITED, FAILED }
+
+    /**
+     * Hasht die APK, schlägt den Hash nach und merkt sich das Ergebnis. Lädt nichts hoch:
+     * eine unbekannte Datei bleibt unbekannt.
+     */
+    private suspend fun checkApp(key: String, app: InstalledApp): CheckOutcome {
+        val hash = runCatching { hashFileUseCase(app.apkFile) }.getOrNull()
+            ?: return CheckOutcome.FAILED
+
+        val lookup = repository.getFileReport(key, hash)
+        val error = lookup.exceptionOrNull()
+        return when {
+            lookup.isSuccess -> {
+                val record = lookup.getOrNull().toRecord(app, hash)
+                cache.put(record)
+                if (record.flagged > 0) CheckOutcome.FLAGGED else CheckOutcome.KNOWN
+            }
+
+            UploadGate.isVerifiedUnknown(error) -> {
+                cache.put(
+                    AppScanRecord(
+                        packageName = app.packageName,
+                        sha256 = hash,
+                        versionCode = app.versionCode,
+                        apkSize = app.apkSize,
+                        checkedAt = System.currentTimeMillis(),
+                        outcome = AppScanOutcome.UNKNOWN
+                    )
+                )
+                CheckOutcome.UNKNOWN
+            }
+
+            error is RateLimitException -> CheckOutcome.RATE_LIMITED
+
+            // Netz- oder Serverfehler: nichts merken, der nächste Lauf versucht es erneut.
+            else -> CheckOutcome.FAILED
         }
     }
 
@@ -204,6 +245,27 @@ class AppCheckManager @Inject constructor(
                 ?: runCatching { hashFileUseCase(app.apkFile) }.getOrNull()
                 ?: return@launch
             cache.put(report.toRecord(app, hash))
+        }
+    }
+
+    /**
+     * Merkt sich, dass VirusTotal diese App nicht kennt. Wird aus einem Einzelscan heraus
+     * aufgerufen, sobald die Upload-Rückfrage erscheint – denn dahin führt nur eine
+     * bestätigte 404.
+     */
+    fun recordUnknown(app: InstalledApp) {
+        scope.launch {
+            val hash = runCatching { hashFileUseCase(app.apkFile) }.getOrNull() ?: return@launch
+            cache.put(
+                AppScanRecord(
+                    packageName = app.packageName,
+                    sha256 = hash,
+                    versionCode = app.versionCode,
+                    apkSize = app.apkSize,
+                    checkedAt = System.currentTimeMillis(),
+                    outcome = AppScanOutcome.UNKNOWN
+                )
+            )
         }
     }
 

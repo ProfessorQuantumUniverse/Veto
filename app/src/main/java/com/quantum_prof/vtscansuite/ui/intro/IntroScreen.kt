@@ -175,6 +175,8 @@ fun IntroScreen(
             Icon(
                 imageVector = Icons.Default.Shield,
                 contentDescription = null,
+                // Bewusst immer weiß: das Schild ist das Logo, kein Text. Es soll auf jeder
+                // Geräte-Palette gleich aussehen, auch wenn der Kontrast mal geringer ausfällt.
                 tint = Color.White,
                 modifier = Modifier
                     .size(60.dp)

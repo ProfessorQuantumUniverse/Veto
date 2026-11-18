@@ -33,6 +33,8 @@ class PrefsRepository @Inject constructor(
 
     private val showSystemApps = booleanPreferencesKey("show_system_apps")
 
+    private val hideWebApks = booleanPreferencesKey("hide_web_apks")
+
     /**
      * Liefert den API-Key im Klartext (nur im Speicher). Solange [migrateLegacyKey] noch
      * nicht gelaufen ist, wird ersatzweise der alte Klartext-Wert gelesen, damit ein
@@ -69,6 +71,20 @@ class PrefsRepository @Inject constructor(
     suspend fun setShowSystemApps(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[showSystemApps] = enabled
+        }
+    }
+
+    /**
+     * Ob Chromes Webseiten-Verknüpfungen (WebAPKs) aus der App-Liste fliegen (Default: ja).
+     * Es sind keine echten Apps, VirusTotal kennt sie nicht, und sie verstopfen die Liste.
+     */
+    val hideWebApksFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[hideWebApks] ?: true
+    }
+
+    suspend fun setHideWebApks(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[hideWebApks] = enabled
         }
     }
 

@@ -18,8 +18,22 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -158,7 +172,7 @@ enum class DashboardSubScreen {
 @Composable
 fun DashboardScreen(
     state: DashboardState,
-    installedApps: List<InstalledApp>,
+    appList: AppListState,
     clipboardUrl: String?,
     apiKeySaved: Boolean,
     savedScans: List<SavedScan>,
@@ -179,6 +193,10 @@ fun DashboardScreen(
     /** Ob vor jedem Upload zurückgefragt wird (Einstellung). */
     askBeforeUpload: Boolean = true,
     onSetAskBeforeUpload: (Boolean) -> Unit = {},
+    hideWebApks: Boolean = true,
+    onSetHideWebApks: (Boolean) -> Unit = {},
+    webApkCount: Int = 0,
+    loadIcon: suspend (String) -> ImageBitmap? = { null },
     /** Gemerkte Hash-Ergebnisse der installierten Apps. */
     appRecords: Map<String, AppScanRecord> = emptyMap(),
     bulkCheck: BulkCheckState = BulkCheckState.Idle,
@@ -187,7 +205,8 @@ fun DashboardScreen(
     onSetShowSystemApps: (Boolean) -> Unit = {},
     onCheckAllHashes: () -> Unit = {},
     onCancelBulkCheck: () -> Unit = {},
-    onAcknowledgeBulkCheck: () -> Unit = {}
+    onAcknowledgeBulkCheck: () -> Unit = {},
+    onRefreshApps: () -> Unit = {}
 ) {
     val view = LocalView.current
     var currentScreen by remember { mutableStateOf(DashboardSubScreen.Home) }
@@ -196,6 +215,27 @@ fun DashboardScreen(
     BackHandler(enabled = currentScreen != DashboardSubScreen.Home) {
         triggerHaptic(view, HapticType.CLICK)
         currentScreen = DashboardSubScreen.Home
+    }
+
+    // Auslöser für den Sammellauf: eingeklappt, ausgeklappt, und dann die Rückfrage.
+    var bulkActionExpanded by remember { mutableStateOf(false) }
+    var showRunWarning by remember { mutableStateOf(false) }
+    LaunchedEffect(bulkActionExpanded) {
+        if (bulkActionExpanded) {
+            delay(12_000)
+            bulkActionExpanded = false
+        }
+    }
+    // Verlässt man den App Scanner, hat der Auslöser dort nichts mehr zu suchen.
+    LaunchedEffect(currentScreen) {
+        if (currentScreen != DashboardSubScreen.InstalledApps) bulkActionExpanded = false
+    }
+
+    val pendingAppCount = remember(appList, appRecords) {
+        appList.appsOrEmpty.count { app ->
+            !app.isSystem &&
+                appRecords[app.packageName]?.matches(app.versionCode, app.apkSize) != true
+        }
     }
 
     // Steuert, ob das Vollbild-Overlay angezeigt oder der Scan im Hintergrund läuft
@@ -253,6 +293,23 @@ fun DashboardScreen(
                                 Icon(Icons.Default.Settings, contentDescription = "Settings")
                             }
                         }
+                        if (currentScreen == DashboardSubScreen.InstalledApps) {
+                            // Erster Tipp klappt die Beschriftung aus und erklärt damit, was
+                            // passiert; der zweite öffnet die Rückfrage. In der Leiste, damit
+                            // weder Kopfzeile noch Liste verdeckt werden.
+                            BulkRunAction(
+                                expanded = bulkActionExpanded,
+                                onClick = {
+                                    triggerHaptic(view, HapticType.CLICK)
+                                    if (bulkActionExpanded) {
+                                        bulkActionExpanded = false
+                                        showRunWarning = true
+                                    } else {
+                                        bulkActionExpanded = true
+                                    }
+                                }
+                            )
+                        }
                     },
                 )
             }
@@ -271,6 +328,7 @@ fun DashboardScreen(
                         apiKeySaved = apiKeySaved,
                         clipboardUrl = clipboardUrl,
                         savedCount = savedScans.size,
+                        requestsUsedToday = requestsUsedToday,
                         onScanClipboard = { url ->
                             onManualScan(url)
                         },
@@ -288,17 +346,19 @@ fun DashboardScreen(
                         onFileSelected = { onCustomFileSelected(it) }
                     )
                     DashboardSubScreen.InstalledApps -> InstalledAppsScreen(
-                        installedApps = installedApps,
+                        appList = appList,
                         apiKeySaved = apiKeySaved,
                         onAppSelected = { onAppSelected(it) },
+                        loadIcon = loadIcon,
                         records = appRecords,
                         bulkCheck = bulkCheck,
                         requestsUsedToday = requestsUsedToday,
                         showSystemApps = showSystemApps,
                         onSetShowSystemApps = onSetShowSystemApps,
-                        onCheckAllHashes = onCheckAllHashes,
+                        onRequestBulkRun = { showRunWarning = true },
                         onCancelBulkCheck = onCancelBulkCheck,
-                        onAcknowledgeBulkCheck = onAcknowledgeBulkCheck
+                        onAcknowledgeBulkCheck = onAcknowledgeBulkCheck,
+                        onRefreshApps = onRefreshApps
                     )
                     DashboardSubScreen.SavedScans -> SavedScansScreen(
                         savedScans = savedScans,
@@ -315,7 +375,10 @@ fun DashboardScreen(
                         showHelp = showHelp,
                         onSetShowHelp = onSetShowHelp,
                         askBeforeUpload = askBeforeUpload,
-                        onSetAskBeforeUpload = onSetAskBeforeUpload
+                        onSetAskBeforeUpload = onSetAskBeforeUpload,
+                        hideWebApks = hideWebApks,
+                        onSetHideWebApks = onSetHideWebApks,
+                        webApkCount = webApkCount
                     )
                 }
             }
@@ -369,6 +432,22 @@ fun DashboardScreen(
                     )
                 }
             }
+        }
+
+        // 2b. SAMMELLAUF-RÜCKFRAGE: was er kostet, wie lange er dauert, und dass dabei
+        // nur Hashes das Gerät verlassen.
+        if (showRunWarning) {
+            BulkRunWarningDialog(
+                pendingApps = pendingAppCount,
+                estimateMinutes = ((pendingAppCount * ApiBudgetRepository.MIN_INTERVAL_MS) / 60_000L).toInt(),
+                remainingRequests = ApiBudgetRepository.remaining(requestsUsedToday),
+                apiKeySaved = apiKeySaved,
+                onConfirm = {
+                    showRunWarning = false
+                    onCheckAllHashes()
+                },
+                onDismiss = { showRunWarning = false }
+            )
         }
 
         // 2a. UPLOAD-RÜCKFRAGE: VirusTotal kennt die Datei nicht. Ohne ausdrückliche
@@ -590,6 +669,8 @@ fun HomeScreen(
     apiKeySaved: Boolean,
     clipboardUrl: String?,
     savedCount: Int,
+    /** Heute verbrauchte VirusTotal-Anfragen, lokal mitgezählt. */
+    requestsUsedToday: Int = 0,
     onScanClipboard: (String) -> Unit,
     onNavigateTo: (DashboardSubScreen) -> Unit
 ) {
@@ -666,6 +747,32 @@ fun HomeScreen(
                             color = onGradient.copy(alpha = 0.88f),
                             style = MaterialTheme.typography.bodyMedium
                         )
+                        // Das Tageskontingent gehört dorthin, wo man vor dem Scannen hinschaut.
+                        if (apiKeySaved) {
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = onGradient.copy(alpha = 0.18f)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.HourglassTop,
+                                        contentDescription = null,
+                                        tint = onGradient,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        "$requestsUsedToday / ${ApiBudgetRepository.DAILY_LIMIT} requests today",
+                                        color = onGradient,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -887,7 +994,7 @@ fun UrlScanScreen(
         Spacer(modifier = Modifier.weight(1f))
 
         GradientButton(
-            text = "Analyze link 🚀",
+            text = "Analyze link",
             icon = Icons.AutoMirrored.Filled.Send,
             enabled = urlText.isNotBlank() && apiKeySaved,
             onClick = { onScan(urlText) },
@@ -931,7 +1038,7 @@ fun CustomFileScanScreen(
             fontWeight = FontWeight.Black
         )
         Text(
-            "Pick a document, image, PDF or APK. The file is hashed first — if a report already exists it loads instantly, otherwise it's uploaded and analyzed live.",
+            "Pick a document, image, PDF or APK. The file is hashed first; if a report already exists it loads instantly, otherwise it's uploaded and analyzed live.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -1008,7 +1115,7 @@ fun CustomFileScanScreen(
                         )
                     } else {
                         Text(
-                            "Tap to select a file 🔍",
+                            "Tap to select a file",
                             fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.titleMedium,
@@ -1059,121 +1166,170 @@ private fun getFileName(context: Context, uri: Uri): String? {
 // ====================================================================================
 // SUB-SCREEN 4: INSTALLED APPS SCAN SCREEN
 // ====================================================================================
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun InstalledAppsScreen(
-    installedApps: List<InstalledApp>,
+    appList: AppListState,
     apiKeySaved: Boolean,
+    /** Vollständige Prüfung: großer Fortschritt, Benachrichtigung, Bericht am Ende. */
     onAppSelected: (InstalledApp) -> Unit,
-    /** Gemerkte Hash-Ergebnisse, nach Paketnamen. */
+    loadIcon: suspend (String) -> ImageBitmap? = { null },
     records: Map<String, AppScanRecord> = emptyMap(),
     bulkCheck: BulkCheckState = BulkCheckState.Idle,
     requestsUsedToday: Int = 0,
     showSystemApps: Boolean = false,
     onSetShowSystemApps: (Boolean) -> Unit = {},
-    onCheckAllHashes: () -> Unit = {},
+    /** Öffnet den Warndialog für einen (weiteren) Sammellauf. */
+    onRequestBulkRun: () -> Unit = {},
     onCancelBulkCheck: () -> Unit = {},
-    onAcknowledgeBulkCheck: () -> Unit = {}
+    onAcknowledgeBulkCheck: () -> Unit = {},
+    onRefreshApps: () -> Unit = {}
 ) {
     val view = LocalView.current
     var searchQuery by remember { mutableStateOf("") }
+    var filter by remember { mutableStateOf(AppFilter.ALL) }
+    var detailApp by remember { mutableStateOf<InstalledApp?>(null) }
 
-    val filteredApps = remember(installedApps, searchQuery) {
-        if (searchQuery.isBlank()) installedApps
-        else installedApps.filter {
-            it.name.contains(searchQuery, ignoreCase = true) ||
-                    it.packageName.contains(searchQuery, ignoreCase = true)
-        }
-    }
-    // Merkt sich, welche Listen-Elemente bereits eingeblendet wurden (kein Re-Animieren beim Scrollen)
-    val revealed = remember { mutableStateMapOf<String, Boolean>() }
+    val apps = appList.appsOrEmpty
+    val isLoading = appList is AppListState.Loading
 
-    // Zahlen für die Kopfzeile: System-Apps zählen nie mit, sie werden nie gesammelt geprüft.
-    val userApps = remember(installedApps) { installedApps.filterNot { it.isSystem } }
-    val fresh = remember(userApps, records) {
-        userApps.filter { records[it.packageName]?.matches(it.versionCode, it.apkSize) == true }
+    fun recordFor(app: InstalledApp): AppScanRecord? =
+        records[app.packageName]?.takeIf { it.matches(app.versionCode, app.apkSize) }
+
+    val userApps = remember(apps) { apps.filterNot { it.isSystem } }
+    val checkedApps = remember(userApps, records) { userApps.filter { recordFor(it) != null } }
+    val unknownCount = remember(checkedApps, records) {
+        checkedApps.count { recordFor(it)?.outcome == AppScanOutcome.UNKNOWN }
     }
-    val unknownCount = remember(fresh, records) {
-        fresh.count { records[it.packageName]?.outcome == AppScanOutcome.UNKNOWN }
+    val detectionCount = remember(checkedApps, records) {
+        checkedApps.count { (recordFor(it)?.flagged ?: 0) > 0 }
     }
-    val flaggedCount = remember(fresh, records) {
-        fresh.count { (records[it.packageName]?.flagged ?: 0) > 0 }
-    }
-    val pendingCount = userApps.size - fresh.size
+    val pendingCount = userApps.size - checkedApps.size
     val estimateMinutes = ((pendingCount * ApiBudgetRepository.MIN_INTERVAL_MS) / 60_000L).toInt()
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 24.dp)
-                .padding(top = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    "Scan installed apps",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Black
-                )
-                Text(
-                    buildString {
-                        append("${userApps.size} apps")
-                        append(" · ${fresh.size} checked")
-                        if (unknownCount > 0) append(" · $unknownCount unknown")
-                        if (flaggedCount > 0) append(" · $flaggedCount flagged")
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    buildString {
-                        append("$requestsUsedToday of ${ApiBudgetRepository.DAILY_LIMIT} requests today")
-                        append(", counted locally")
-                        if (pendingCount > 0) {
-                            append(" · $pendingCount left")
-                            if (estimateMinutes >= 1) append(", about $estimateMinutes min")
-                        }
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+    val visibleApps = remember(apps, searchQuery, filter, records) {
+        apps
+            .filter { app ->
+                searchQuery.isBlank() ||
+                    app.name.contains(searchQuery, ignoreCase = true) ||
+                    app.packageName.contains(searchQuery, ignoreCase = true) ||
+                    app.versionName?.contains(searchQuery, ignoreCase = true) == true
             }
+            .filter { app ->
+                when (filter) {
+                    AppFilter.ALL -> true
+                    AppFilter.UNCHECKED -> recordFor(app) == null
+                    AppFilter.UNKNOWN -> recordFor(app)?.outcome == AppScanOutcome.UNKNOWN
+                }
+            }
+            // Treffer nach oben: sonst verschwinden sie irgendwo im Alphabet.
+            .sortedWith(
+                compareByDescending<InstalledApp> { (recordFor(it)?.flagged ?: 0) > 0 }
+                    .thenBy { it.isSystem }
+                    .thenBy { it.name.lowercase() }
+            )
+    }
 
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text("Search apps…") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onFocusChanged { if (it.isFocused) triggerHaptic(view, HapticType.CLICK) },
-                shape = MaterialTheme.shapes.large,
-                leadingIcon = { Icon(Icons.Default.Search, null) },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }) {
-                            Icon(Icons.Default.Clear, null)
-                        }
+    val revealed = remember { mutableStateMapOf<String, Boolean>() }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        PullToRefreshBox(
+            isRefreshing = isLoading,
+            onRefresh = onRefreshApps,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            // Alles scrollt mit – nur die Filter bleiben oben kleben, damit die Liste
+            // möglichst viel Platz bekommt.
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(top = 16.dp, bottom = 108.dp)
+            ) {
+                item(key = "counts") {
+                    Text(
+                        if (isLoading) "Reading the app list…" else buildString {
+                            append("${userApps.size} apps")
+                            append(" · ${checkedApps.size} checked")
+                            if (unknownCount > 0) append(" · $unknownCount unknown")
+                            if (detectionCount > 0) append(" · $detectionCount with detections")
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 24.dp)
+                    )
+                }
+
+                item(key = "quota") {
+                    Box(modifier = Modifier.padding(horizontal = 24.dp)) {
+                        QuotaChip(
+                            used = requestsUsedToday,
+                            pendingApps = pendingCount,
+                            estimateMinutes = estimateMinutes
+                        )
                     }
                 }
-            )
 
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                // Platz für die schwebende Pille am unteren Rand
-                contentPadding = PaddingValues(bottom = 108.dp)
-            ) {
-                item(key = "system-toggle") {
-                    SystemAppsToggle(
-                        checked = showSystemApps,
-                        onCheckedChange = {
-                            triggerHaptic(view, HapticType.CLICK)
-                            onSetShowSystemApps(it)
+                item(key = "search") {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Search apps…") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp)
+                            .onFocusChanged { if (it.isFocused) triggerHaptic(view, HapticType.CLICK) },
+                        shape = MaterialTheme.shapes.large,
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Default.Search, null) },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(Icons.Default.Clear, null)
+                                }
+                            }
                         }
                     )
                 }
 
-                if (filteredApps.isEmpty()) {
+                stickyHeader(key = "filters") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.background)
+                            .padding(horizontal = 24.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        AppFilter.entries.forEach { option ->
+                            FilterChip(
+                                selected = filter == option,
+                                onClick = {
+                                    triggerHaptic(view, HapticType.CLICK)
+                                    filter = option
+                                },
+                                label = { Text(option.label) },
+                                shape = RoundedCornerShape(50)
+                            )
+                        }
+                    }
+                }
+
+                item(key = "system-toggle") {
+                    Box(modifier = Modifier.padding(horizontal = 24.dp)) {
+                        SystemAppsToggle(
+                            checked = showSystemApps,
+                            onCheckedChange = {
+                                triggerHaptic(view, HapticType.CLICK)
+                                onSetShowSystemApps(it)
+                            }
+                        )
+                    }
+                }
+
+                if (isLoading) {
+                    items(5, key = { "skeleton-$it" }) {
+                        Box(modifier = Modifier.padding(horizontal = 24.dp)) { AppRowSkeleton() }
+                    }
+                } else if (visibleApps.isEmpty()) {
                     item {
                         Box(
                             modifier = Modifier
@@ -1182,32 +1338,41 @@ fun InstalledAppsScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                "No apps found.",
+                                when {
+                                    apps.isEmpty() -> "No apps found."
+                                    filter == AppFilter.UNCHECKED -> "Every app has been checked."
+                                    filter == AppFilter.UNKNOWN -> "No app is unknown to VirusTotal."
+                                    else -> "Nothing matches that search."
+                                },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
                 } else {
-                    items(filteredApps, key = { it.packageName }) { app ->
-                        StaggeredReveal(
-                            alreadyRevealed = revealed[app.packageName] == true,
-                            onRevealed = { revealed[app.packageName] = true }
-                        ) {
-                            AppScanRow(
-                                app = app,
-                                record = records[app.packageName]
-                                    ?.takeIf { it.matches(app.versionCode, app.apkSize) },
-                                enabled = apiKeySaved,
-                                onCheck = { onAppSelected(app) }
-                            )
+                    items(visibleApps, key = { it.packageName }) { app ->
+                        Box(modifier = Modifier.padding(horizontal = 24.dp)) {
+                            StaggeredReveal(
+                                alreadyRevealed = revealed[app.packageName] == true,
+                                onRevealed = { revealed[app.packageName] = true }
+                            ) {
+                                AppScanRow(
+                                    app = app,
+                                    record = recordFor(app),
+                                    loadIcon = loadIcon,
+                                    onOpen = {
+                                        triggerHaptic(view, HapticType.CLICK)
+                                        detailApp = app
+                                    }
+                                )
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Schwebende Pille: Sammellauf starten, verfolgen, abbrechen.
+        // Fortschritt und Abschluss bleiben unten: das ist Rückmeldung, kein Knopf.
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -1225,32 +1390,125 @@ fun InstalledAppsScreen(
 
                 is BulkCheckState.Finished -> BulkFinishedBanner(
                     state = bulkCheck,
+                    onContinue = if (bulkCheck.remainingApps > 0 && apiKeySaved) {
+                        {
+                            triggerHaptic(view, HapticType.CLICK)
+                            onAcknowledgeBulkCheck()
+                            onRequestBulkRun()
+                        }
+                    } else null,
                     onDismiss = {
                         triggerHaptic(view, HapticType.CLICK)
                         onAcknowledgeBulkCheck()
                     }
                 )
 
-                // Eigene Fläche darunter: die Pille schwebt über der Liste und muss auch
-                // im deaktivierten Zustand als Fläche lesbar bleiben.
-                BulkCheckState.Idle -> Surface(
-                    shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                    tonalElevation = 6.dp,
-                    shadowElevation = 8.dp
-                ) {
-                    GradientButton(
-                        text = when {
-                            !apiKeySaved -> "API key required"
-                            pendingCount > 0 -> "Check hash of all apps"
-                            else -> "All apps checked"
-                        },
-                        icon = Icons.Default.TravelExplore,
-                        enabled = apiKeySaved && pendingCount > 0,
-                        onClick = onCheckAllHashes
-                    )
-                }
+                BulkCheckState.Idle -> Unit
             }
+        }
+    }
+
+    detailApp?.let { app ->
+        AppDetailSheet(
+            app = app,
+            record = recordFor(app),
+            apiKeySaved = apiKeySaved,
+            onScan = {
+                detailApp = null
+                onAppSelected(app)
+            },
+            onDismiss = { detailApp = null }
+        )
+    }
+}
+
+/**
+ * Auslöser für den Sammellauf, in der Titelleiste. Eingeklappt ein Icon; der erste Tipp
+ * klappt die Beschriftung aus und sagt damit, was der zweite Tipp tun wird.
+ */
+@Composable
+private fun BulkRunAction(
+    expanded: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .padding(end = 8.dp)
+            .clip(RoundedCornerShape(50))
+            .background(
+                if (expanded) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = if (expanded) 14.dp else 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Icon(
+            Icons.Default.TravelExplore,
+            contentDescription = "Check all app hashes",
+            tint = if (expanded) MaterialTheme.colorScheme.onSecondaryContainer
+            else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(22.dp)
+        )
+        AnimatedVisibility(visible = expanded) {
+            Text(
+                "Check all app hashes",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+/** Filter über der Liste. Bewusst nur Zustände, keine Bewertung. */
+private enum class AppFilter(val label: String) {
+    ALL("All"),
+    UNCHECKED("Unchecked"),
+    UNKNOWN("Unknown")
+}
+
+/** Zeigt, was vom Tageskontingent übrig ist – und was ein voller Lauf davon kosten würde. */
+@Composable
+private fun QuotaChip(used: Int, pendingApps: Int, estimateMinutes: Int) {
+    val remaining = ApiBudgetRepository.remaining(used)
+    val low = remaining < LOW_BUDGET
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = if (low) MaterialTheme.expressive.warningContainer.copy(alpha = 0.5f)
+        else MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(
+            1.dp,
+            if (low) MaterialTheme.expressive.warning.copy(alpha = 0.5f)
+            else MaterialTheme.colorScheme.outlineVariant
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                Icons.Default.HourglassTop,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = if (low) MaterialTheme.expressive.warning
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                buildString {
+                    append("$used / ${ApiBudgetRepository.DAILY_LIMIT} requests today")
+                    if (pendingApps > 0) {
+                        append(" · $pendingApps ")
+                        append(if (pendingApps == 1) "app" else "apps")
+                        append(" left")
+                        if (estimateMinutes >= 1) append(", about $estimateMinutes min")
+                    }
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -1264,10 +1522,13 @@ private fun SystemAppsToggle(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
-    Card(
+    OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
             modifier = Modifier
@@ -1345,14 +1606,58 @@ private fun statusFor(record: AppScanRecord?, isSystem: Boolean): AppStatus {
     }
 }
 
+/** Platzhalter, solange die App-Liste aufgebaut wird. */
+@Composable
+private fun AppRowSkeleton() {
+    val shade = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.12f)
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(shade, CircleShape)
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.5f)
+                        .height(14.dp)
+                        .background(shade, RoundedCornerShape(50))
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.3f)
+                        .height(10.dp)
+                        .background(shade, RoundedCornerShape(50))
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun AppScanRow(
     app: InstalledApp,
     record: AppScanRecord?,
-    enabled: Boolean,
-    onCheck: () -> Unit
+    loadIcon: suspend (String) -> ImageBitmap?,
+    onOpen: () -> Unit
 ) {
-    val view = LocalView.current
     val interaction = remember { MutableInteractionSource() }
     val scale = pressScale(interaction)
     val status = statusFor(record, app.isSystem)
@@ -1362,22 +1667,20 @@ private fun AppScanRow(
     } else {
         MaterialTheme.colorScheme.surfaceContainerHigh
     }
+    val outline = if (status.tint > 0.5f) status.container else MaterialTheme.colorScheme.outlineVariant
 
-    val iconBitmap = remember(app.packageName) {
-        runCatching { app.icon?.toBitmap(96, 96)?.asImageBitmap() }.getOrNull()
-    }
+    // Icon erst laden, wenn die Zeile wirklich gebaut wird.
+    var icon by remember(app.packageName) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(app.packageName) { icon = loadIcon(app.packageName) }
 
-    Card(
-        onClick = {
-            triggerHaptic(view, HapticType.CLICK)
-            onCheck()
-        },
-        enabled = enabled,
+    OutlinedCard(
+        onClick = onOpen,
         modifier = Modifier
             .fillMaxWidth()
             .scaleOnPress(scale),
         shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = container),
+        colors = CardDefaults.outlinedCardColors(containerColor = container),
+        border = BorderStroke(1.dp, outline),
         interactionSource = interaction
     ) {
         Row(
@@ -1387,19 +1690,31 @@ private fun AppScanRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            if (iconBitmap != null) {
-                Image(
-                    bitmap = iconBitmap,
-                    contentDescription = null,
-                    modifier = Modifier.size(40.dp)
-                )
-            } else {
-                Icon(
-                    Icons.Default.Android,
-                    contentDescription = null,
-                    modifier = Modifier.size(40.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            BadgedBox(
+                badge = {
+                    if ((record?.flagged ?: 0) > 0) {
+                        Badge(
+                            containerColor = MaterialTheme.expressive.danger,
+                            contentColor = Color.White
+                        ) { Text("${record?.flagged}") }
+                    }
+                }
+            ) {
+                val bitmap = icon
+                if (bitmap != null) {
+                    Image(
+                        bitmap = bitmap,
+                        contentDescription = null,
+                        modifier = Modifier.size(40.dp)
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.Android,
+                        contentDescription = null,
+                        modifier = Modifier.size(40.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             Column(
@@ -1423,44 +1738,249 @@ private fun AppScanRow(
                     buildString {
                         append(app.packageName)
                         app.versionName?.let { append(" · $it") }
+                        record?.let { append(" · checked ${relativeTime(it.checkedAt)}") }
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+            }
 
-                if (record?.outcome == AppScanOutcome.UNKNOWN) {
-                    Text(
-                        if (app.isSystem) {
-                            "System APKs are never uploaded, so there is nothing more to check."
-                        } else {
-                            "Checking it means uploading the APK. You will be asked first."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+            Icon(
+                Icons.Default.Info,
+                contentDescription = "Details",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+/** "vor 5 Minuten" ohne Bibliothek – grob reicht hier völlig. */
+private fun relativeTime(epochMillis: Long): String {
+    val minutes = ((System.currentTimeMillis() - epochMillis) / 60_000L).coerceAtLeast(0)
+    return when {
+        minutes < 1 -> "just now"
+        minutes < 60 -> "$minutes min ago"
+        minutes < 60 * 24 -> "${minutes / 60} h ago"
+        else -> "${minutes / (60 * 24)} d ago"
+    }
+}
+
+/**
+ * Letzte Rückfrage vor einem Sammellauf: was es kostet, wie lange es dauert – und der
+ * wichtigste Satz, nämlich dass nichts hochgeladen wird.
+ */
+@Composable
+private fun BulkRunWarningDialog(
+    pendingApps: Int,
+    estimateMinutes: Int,
+    remainingRequests: Int,
+    apiKeySaved: Boolean,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val planned = minOf(pendingApps, ApiBudgetRepository.MAX_PER_RUN, remainingRequests)
+    val view = LocalView.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                Icons.Default.TravelExplore,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary
+            )
+        },
+        title = { Text("Check all app hashes?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Veto sends only the SHA-256 of each APK and asks whether VirusTotal " +
+                        "already knows it. No file is uploaded, not even an unknown one.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                when {
+                    !apiKeySaved -> Text(
+                        "Add your VirusTotal API key in Settings first.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error
                     )
+
+                    planned <= 0 -> Text(
+                        "Nothing to do: every app already has a current result.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    else -> {
+                        Text(
+                            buildString {
+                                append("$planned ")
+                                append(if (planned == 1) "app" else "apps")
+                                append(", so $planned of your ${ApiBudgetRepository.DAILY_LIMIT} ")
+                                append("daily requests. The free key allows ")
+                                append("${ApiBudgetRepository.PER_MINUTE_LIMIT} per minute, so this takes ")
+                                append(
+                                    when {
+                                        estimateMinutes < 1 -> "well under a minute."
+                                        estimateMinutes == 1 -> "about a minute."
+                                        else -> "about $estimateMinutes minutes."
+                                    }
+                                )
+                            },
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            "It keeps running in a notification if you leave the app, and you " +
+                                "can stop it at any time. Everything found so far is kept.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (remainingRequests < LOW_BUDGET) {
+                            Text(
+                                "Only $remainingRequests requests are left today. The run stops " +
+                                    "when they are used up and continues tomorrow.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.expressive.warning
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = apiKeySaved && planned > 0,
+                onClick = {
+                    triggerHaptic(view, HapticType.CLICK)
+                    onConfirm()
+                }
+            ) { Text("Start") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+        shape = MaterialTheme.shapes.extraLarge
+    )
+}
+
+/**
+ * Was Veto über eine App weiß – und ein Knopf, der den gewohnten Einzelscan startet:
+ * Fortschrittsanzeige, Benachrichtigung, am Ende der vollständige Bericht. Ist die APK
+ * VirusTotal unbekannt, fragt dieser Ablauf von sich aus nach dem Upload.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AppDetailSheet(
+    app: InstalledApp,
+    record: AppScanRecord?,
+    apiKeySaved: Boolean,
+    onScan: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val status = statusFor(record, app.isSystem)
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text(
+                app.name,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Black
+            )
+            Pill(
+                text = status.label,
+                container = status.container,
+                content = status.content,
+                icon = status.icon
+            )
+
+            OutlinedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.large,
+                colors = CardDefaults.outlinedCardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                ),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    DetailRow("Package", app.packageName)
+                    app.versionName?.let { DetailRow("Version", it) }
+                    DetailRow("APK size", formatFileSize(app.apkSize))
+                    record?.let {
+                        DetailRow("SHA-256", it.sha256)
+                        DetailRow("Checked", relativeTime(it.checkedAt))
+                        if (it.outcome == AppScanOutcome.KNOWN && it.total > 0) {
+                            DetailRow("Engines", "${it.flagged} of ${it.total} reported something")
+                        }
+                    }
+                    if (app.isSystem) {
+                        DetailRow("Type", "System app, never uploaded")
+                    }
                 }
             }
 
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .background(
-                        if (enabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
-                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.05f),
-                        CircleShape
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Default.PlayArrow,
-                    contentDescription = "Check this app",
-                    tint = if (enabled) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                    modifier = Modifier.size(20.dp)
-                )
-            }
+            GradientButton(
+                text = when {
+                    record?.outcome == AppScanOutcome.UNKNOWN -> "Analyze this app"
+                    record == null -> "Scan this app"
+                    else -> "Open the full report"
+                },
+                icon = Icons.Default.PlayArrow,
+                enabled = apiKeySaved,
+                onClick = onScan,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Text(
+                when {
+                    app.isSystem && record?.outcome == AppScanOutcome.UNKNOWN ->
+                        "VirusTotal has no report for this system app, and a system APK is " +
+                            "never uploaded, so there is nothing more to find."
+
+                    record?.outcome == AppScanOutcome.UNKNOWN ->
+                        "VirusTotal has no report for this APK. Getting one means uploading " +
+                            "the whole file, which belongs to its developer. Veto asks before " +
+                            "anything leaves your device."
+
+                    else ->
+                        "Looks up the APK by its hash and opens the full report. A file " +
+                            "VirusTotal has never seen is never uploaded without asking."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun DetailRow(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        SelectionContainer {
+            Text(
+                value,
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = if (label == "SHA-256") FontFamily.Monospace else null
+            )
         }
     }
 }
@@ -1473,7 +1993,9 @@ private fun BulkRunningPill(
     Surface(
         shape = RoundedCornerShape(50),
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
-        tonalElevation = 6.dp
+        tonalElevation = 6.dp,
+        shadowElevation = 8.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column {
             Row(
@@ -1515,6 +2037,7 @@ private fun BulkRunningPill(
 @Composable
 private fun BulkFinishedBanner(
     state: BulkCheckState.Finished,
+    onContinue: (() -> Unit)?,
     onDismiss: () -> Unit
 ) {
     val headline = when (state.reason) {
@@ -1530,12 +2053,14 @@ private fun BulkFinishedBanner(
         StopReason.DAILY_LIMIT ->
             "The free key allows ${ApiBudgetRepository.DAILY_LIMIT} requests a day. " +
                 "${state.remainingApps} apps are left for tomorrow."
+
         StopReason.RATE_LIMITED ->
             "Nothing was lost. ${state.remainingApps} apps are left, try again in a minute."
+
         else -> buildString {
             append("${state.checked} checked")
             if (state.unknown > 0) append(", ${state.unknown} unknown to VirusTotal")
-            if (state.flagged > 0) append(", ${state.flagged} flagged")
+            if (state.flagged > 0) append(", ${state.flagged} with detections")
             if (state.failed > 0) append(", ${state.failed} could not be read")
             if (state.remainingApps > 0) append(". ${state.remainingApps} left")
         }
@@ -1545,29 +2070,47 @@ private fun BulkFinishedBanner(
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
         tonalElevation = 6.dp,
+        shadowElevation = 8.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
-            modifier = Modifier.padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        Column(
+            modifier = Modifier.padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    headline,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    detail,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        headline,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        detail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                TextButton(onClick = onDismiss) { Text("Got it") }
+            }
+            if (onContinue != null) {
+                GradientButton(
+                    text = "Continue with the rest",
+                    icon = Icons.Default.PlayArrow,
+                    onClick = onContinue,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
-            TextButton(onClick = onDismiss) { Text("Got it") }
         }
     }
 }
+
+/** Ab wann die Kontingent-Anzeige warnt. */
+private const val LOW_BUDGET = 50
+
 
 // ====================================================================================
 // SUB-SCREEN: SAVED SCANS
@@ -1744,7 +2287,10 @@ fun SettingsScreen(
     showHelp: Boolean,
     onSetShowHelp: (Boolean) -> Unit,
     askBeforeUpload: Boolean = true,
-    onSetAskBeforeUpload: (Boolean) -> Unit = {}
+    onSetAskBeforeUpload: (Boolean) -> Unit = {},
+    hideWebApks: Boolean = true,
+    onSetHideWebApks: (Boolean) -> Unit = {},
+    webApkCount: Int = 0
 ) {
     val view = LocalView.current
     val context = LocalContext.current
@@ -1843,7 +2389,7 @@ fun SettingsScreen(
 
         // Report display preferences
         Text(
-            "Report display 🧩",
+            "Report display",
             fontWeight = FontWeight.Bold,
             style = MaterialTheme.typography.titleMedium
         )
@@ -1881,7 +2427,7 @@ fun SettingsScreen(
 
         // Upload-Verhalten: die Rückfrage vor jedem Upload lässt sich abschalten.
         Text(
-            "Uploads 🔐",
+            "Uploads",
             fontWeight = FontWeight.Bold,
             style = MaterialTheme.typography.titleMedium
         )
@@ -1924,9 +2470,59 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // App-Liste aufräumen: Chromes Webseiten-Verknüpfungen sind keine echten Apps.
+        Text(
+            "App list",
+            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.titleMedium
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Hide web app shortcuts",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        buildString {
+                            append("Shortcuts Chrome creates for “add to home screen”. ")
+                            append("They are not real apps and VirusTotal has nothing on them.")
+                            if (webApkCount > 0) {
+                                append(" Currently ")
+                                append(if (hideWebApks) "hiding" else "showing")
+                                append(" $webApkCount.")
+                            }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = hideWebApks,
+                    onCheckedChange = {
+                        triggerHaptic(view, HapticType.CLICK)
+                        onSetHideWebApks(it)
+                    }
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         // FAQ / Instructions
         Text(
-            "How to get your key 💡",
+            "How to get your key",
             fontWeight = FontWeight.Bold,
             style = MaterialTheme.typography.titleMedium
         )
