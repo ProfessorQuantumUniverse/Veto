@@ -1,0 +1,7 @@
+Batch scanning and upload safety.
+
+The app scanner can now check every installed app in one run. Only the SHA-256 of each APK is sent, nothing is uploaded, and the daily request budget of the free key is shown while it runs.
+
+A file is uploaded only after VirusTotal confirms it does not know it, and only after you agree to that one upload. A failed lookup no longer sends the file.
+
+The API key is never sent to any host other than virustotal.com.
