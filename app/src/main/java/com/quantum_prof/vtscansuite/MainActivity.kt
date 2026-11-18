@@ -66,6 +66,10 @@ class MainActivity : ComponentActivity() {
                     val savedScans by viewModel.savedScans.collectAsState()
                     val showHelp by viewModel.showHelp.collectAsState()
                     val askBeforeUpload by viewModel.askBeforeUpload.collectAsState()
+                    val appRecords by viewModel.appRecords.collectAsState()
+                    val bulkCheck by viewModel.bulkCheck.collectAsState()
+                    val requestsUsedToday by viewModel.requestsUsedToday.collectAsState()
+                    val showSystemApps by viewModel.showSystemApps.collectAsState()
                     val context = LocalContext.current
 
                     // Deutliches Abschluss-Feedback, sobald ein Scan fertig ist (einmalig pro Wechsel)
@@ -133,7 +137,15 @@ class MainActivity : ComponentActivity() {
                                 onConfirmUpload = { viewModel.confirmUpload() },
                                 onDeclineUpload = { viewModel.declineUpload() },
                                 askBeforeUpload = askBeforeUpload,
-                                onSetAskBeforeUpload = { viewModel.setAskBeforeUpload(it) }
+                                onSetAskBeforeUpload = { viewModel.setAskBeforeUpload(it) },
+                                appRecords = appRecords,
+                                bulkCheck = bulkCheck,
+                                requestsUsedToday = requestsUsedToday,
+                                showSystemApps = showSystemApps,
+                                onSetShowSystemApps = { viewModel.setShowSystemApps(it) },
+                                onCheckAllHashes = { viewModel.checkAllHashes() },
+                                onCancelBulkCheck = { viewModel.cancelBulkCheck() },
+                                onAcknowledgeBulkCheck = { viewModel.acknowledgeBulkCheck() }
                             )
                         }
                     }

@@ -4,14 +4,19 @@ package com.quantum_prof.vtscansuite.ui.dashboard
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.quantum_prof.vtscansuite.data.model.AppScanRecord
 import com.quantum_prof.vtscansuite.data.model.FileReportResponse
 import com.quantum_prof.vtscansuite.data.model.SavedScan
 import com.quantum_prof.vtscansuite.data.model.savedScanFrom
+import com.quantum_prof.vtscansuite.data.repository.ApiBudgetRepository
+import com.quantum_prof.vtscansuite.data.repository.AppScanCacheRepository
 import com.quantum_prof.vtscansuite.data.repository.PrefsRepository
 import com.quantum_prof.vtscansuite.data.repository.SavedScansRepository
 import com.quantum_prof.vtscansuite.domain.repository.ScanPhase
 import com.quantum_prof.vtscansuite.domain.usecase.ExtractApkUseCase
 import com.quantum_prof.vtscansuite.domain.usecase.InstalledApp
+import com.quantum_prof.vtscansuite.scan.AppCheckManager
+import com.quantum_prof.vtscansuite.scan.BulkCheckState
 import com.quantum_prof.vtscansuite.scan.ScanManager
 import com.quantum_prof.vtscansuite.scan.ScanState
 import com.quantum_prof.vtscansuite.scan.UploadSubject
@@ -22,13 +27,18 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 @HiltViewModel
 class DashboardViewModel @Inject constructor(
     private val scanManager: ScanManager,
+    private val appCheckManager: AppCheckManager,
+    private val appScanCache: AppScanCacheRepository,
+    private val apiBudget: ApiBudgetRepository,
     private val extractApkUseCase: ExtractApkUseCase,
     private val prefsRepository: PrefsRepository,
     private val savedScansRepository: SavedScansRepository
@@ -39,8 +49,34 @@ class DashboardViewModel @Inject constructor(
         .map { it.toDashboardState() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardState.Idle)
 
-    private val _installedApps = MutableStateFlow<List<InstalledApp>>(emptyList())
-    val installedApps: StateFlow<List<InstalledApp>> = _installedApps.asStateFlow()
+    /** Die Liste folgt der Einstellung, ob System-Apps sichtbar sind. */
+    val installedApps: StateFlow<List<InstalledApp>> = prefsRepository.showSystemAppsFlow
+        .map { includeSystem ->
+            withContext(Dispatchers.IO) {
+                runCatching { extractApkUseCase.getInstalledApps(includeSystem) }
+                    .getOrDefault(emptyList())
+            }
+        }
+        .onEach { apps ->
+            // Deinstallierte Apps aus dem Ergebnis-Cache werfen.
+            if (apps.isNotEmpty()) appCheckManager.forgetUninstalled(apps.map { it.packageName }.toSet())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Gemerkte Hash-Ergebnisse, nach Paketnamen. */
+    val appRecords: StateFlow<Map<String, AppScanRecord>> = appScanCache.records
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    /** Stand des Sammellaufs. */
+    val bulkCheck: StateFlow<BulkCheckState> = appCheckManager.state
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), BulkCheckState.Idle)
+
+    /** Heute verbrauchte VirusTotal-Anfragen (lokal mitgezählt). */
+    val requestsUsedToday: StateFlow<Int> = apiBudget.usedToday
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val showSystemApps: StateFlow<Boolean> = prefsRepository.showSystemAppsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     private val _clipboardUrl = MutableStateFlow<String?>(null)
     val clipboardUrl: StateFlow<String?> = _clipboardUrl.asStateFlow()
@@ -64,18 +100,26 @@ class DashboardViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
     init {
-        loadInstalledApps()
-    }
+        // Das Ergebnis einer einzeln gestarteten App-Prüfung landet im selben Cache wie
+        // der Sammellauf – sonst stünde in der Liste weiter "unbekannt".
+        viewModelScope.launch {
+            scanManager.state.collect { state ->
+                val app = pendingSingleCheck ?: return@collect
+                when (state) {
+                    is ScanState.Success -> {
+                        appCheckManager.recordSingleResult(app, state.report)
+                        pendingSingleCheck = null
+                    }
 
-    private fun loadInstalledApps() {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                _installedApps.value = extractApkUseCase.getInstalledApps()
-            } catch (e: Exception) {
-                _installedApps.value = emptyList()
+                    is ScanState.Error -> pendingSingleCheck = null
+                    else -> Unit
+                }
             }
         }
     }
+
+    /** Welche App gerade einzeln geprüft wird (für die Übernahme ins Ergebnis). */
+    private var pendingSingleCheck: InstalledApp? = null
 
     fun updateClipboardUrl(url: String?) {
         _clipboardUrl.value = url
@@ -111,7 +155,23 @@ class DashboardViewModel @Inject constructor(
         scanManager.scanUrl(url)
     }
 
-    fun scanApp(app: InstalledApp) = scanManager.scanApp(app.apkFile, app.name)
+    fun scanApp(app: InstalledApp) {
+        pendingSingleCheck = app
+        scanManager.scanApp(app.apkFile, app.name, isSystemApp = app.isSystem)
+    }
+
+    /** Sammellauf über alle sichtbaren Nicht-System-Apps. */
+    fun checkAllHashes() = appCheckManager.checkAll(installedApps.value)
+
+    fun cancelBulkCheck() = appCheckManager.cancel()
+
+    fun acknowledgeBulkCheck() = appCheckManager.acknowledge()
+
+    fun setShowSystemApps(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            prefsRepository.setShowSystemApps(enabled)
+        }
+    }
 
     fun scanUri(uri: Uri) = scanManager.scanUri(uri)
 

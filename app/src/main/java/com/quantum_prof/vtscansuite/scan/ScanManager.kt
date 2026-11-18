@@ -97,8 +97,9 @@ class ScanManager @Inject constructor(
         repository.scanUrl(key, url, onProgress)
     }
 
-    fun scanApp(apkFile: File, name: String) = start(name) { key, onProgress ->
-        analyzeFile(key, apkFile, UploadSubject.INSTALLED_APP, onProgress, deleteAfter = false)
+    fun scanApp(apkFile: File, name: String, isSystemApp: Boolean = false) = start(name) { key, onProgress ->
+        val subject = if (isSystemApp) UploadSubject.SYSTEM_APP else UploadSubject.INSTALLED_APP
+        analyzeFile(key, apkFile, subject, onProgress, deleteAfter = false)
     }
 
     fun scanUri(uri: Uri) {
@@ -173,6 +174,10 @@ class ScanManager @Inject constructor(
                 // Fehlschlag, der *kein* verifiziertes "unbekannt" ist: niemals hochladen.
                 error != null && !UploadGate.isVerifiedUnknown(error) ->
                     Result.failure(lookupFailure(error))
+
+                // System-APKs verlassen das Gerät nie, auch nicht auf Wunsch.
+                subject == UploadSubject.SYSTEM_APP ->
+                    Result.failure(SystemAppUploadRefusedException())
 
                 // Unbekannt (404) oder Eintrag ohne Engine-Ergebnisse: nur ein Upload bringt
                 // ein Ergebnis. Zurückfragen, sofern der Nutzer das nicht abgeschaltet hat.

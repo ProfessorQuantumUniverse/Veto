@@ -8,6 +8,9 @@ enum class UploadSubject {
     /** Die APK einer installierten App (gehört einem fremden Entwickler). */
     INSTALLED_APP,
 
+    /** Die APK einer System- oder vorinstallierten App. Wird nie hochgeladen. */
+    SYSTEM_APP,
+
     /** Eine Datei, die der Nutzer selbst ausgewählt hat. */
     PICKED_FILE
 }
@@ -29,3 +32,12 @@ object UploadGate {
 
 /** Der Nutzer hat den Upload dieser Datei abgelehnt – kein Fehler, nur ein Abbruch. */
 class UploadDeclinedException : Exception("Upload cancelled. The file stayed on your device.")
+
+/**
+ * System-APKs werden nie hochgeladen: sie gehören dem Hersteller, nicht dem Nutzer,
+ * und können gerätespezifische Bestandteile enthalten.
+ */
+class SystemAppUploadRefusedException : Exception(
+    "VirusTotal has no report for this system app, and system APKs are never uploaded. " +
+        "They belong to the device manufacturer and may contain device-specific parts."
+)

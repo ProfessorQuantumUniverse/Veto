@@ -31,6 +31,8 @@ class PrefsRepository @Inject constructor(
 
     private val askBeforeUpload = booleanPreferencesKey("ask_before_upload")
 
+    private val showSystemApps = booleanPreferencesKey("show_system_apps")
+
     /**
      * Liefert den API-Key im Klartext (nur im Speicher). Solange [migrateLegacyKey] noch
      * nicht gelaufen ist, wird ersatzweise der alte Klartext-Wert gelesen, damit ein
@@ -54,6 +56,20 @@ class PrefsRepository @Inject constructor(
      */
     val askBeforeUploadFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[askBeforeUpload] ?: true
+    }
+
+    /**
+     * Ob System- und vorinstallierte Apps in der App-Liste auftauchen (Default: aus).
+     * Sie sind nur zum Ansehen: am Sammelcheck nehmen sie nie teil.
+     */
+    val showSystemAppsFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[showSystemApps] ?: false
+    }
+
+    suspend fun setShowSystemApps(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[showSystemApps] = enabled
+        }
     }
 
     suspend fun setAskBeforeUpload(enabled: Boolean) {
