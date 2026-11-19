@@ -19,6 +19,9 @@ object ScanNotifications {
     const val ONGOING_ID = 1001
     const val RESULT_ID = 1002
     const val APP_CHECK_ID = 1003
+    const val BULK_RESULT_ID = 1004
+    const val UPLOAD_ID = 1005
+    const val UPLOAD_RESULT_ID = 1006
 
     fun ensureChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
@@ -70,28 +73,127 @@ object ScanNotifications {
 
     /**
      * Fortschritt des Sammellaufs. Läuft minutenlang, deshalb mit Abbrechen-Aktion und
-     * ohne Ton.
+     * ohne Ton. [state] ist null, solange noch kein Zustand vorliegt.
+     *
+     * Die App-Namen verraten, was auf dem Gerät installiert ist. Auf dem Sperrbildschirm
+     * erscheint deshalb nur die öffentliche Fassung ohne Namen.
      */
     fun buildAppCheck(
         context: Context,
-        done: Int,
-        total: Int,
-        currentApp: String,
+        state: BulkCheckState.Running?,
         stopIntent: PendingIntent
-    ): Notification = NotificationCompat.Builder(context, CHANNEL_PROGRESS)
-        .setSmallIcon(R.drawable.ic_scan_notification)
-        .setContentTitle("Checking app hashes")
-        .setContentText(
-            if (total > 0) "${done + 1} of $total · $currentApp" else currentApp
-        )
-        .setProgress(total.coerceAtLeast(1), done, false)
-        .setOngoing(true)
-        .setOnlyAlertOnce(true)
-        .setContentIntent(openAppIntent(context, requestCode = 2))
-        .addAction(0, "Stop", stopIntent)
-        .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-        .build()
+    ): Notification {
+        val builder = NotificationCompat.Builder(context, CHANNEL_PROGRESS)
+            .setSmallIcon(R.drawable.ic_scan_notification)
+            .setContentTitle("Checking app hashes")
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(openAppIntent(context, requestCode = 2, openAppList = true))
+            .addAction(0, "Stop", stopIntent)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+        if (state == null || state.total <= 0) {
+            return builder
+                .setContentText("Starting…")
+                .setProgress(0, 0, true)
+                .setPublicVersion(publicAppCheck(context, "Starting…", null, stopIntent))
+                .build()
+        }
+        val counts = BulkCheckText.progress(state)
+        return builder
+            .setContentText("$counts · ${state.currentApp}")
+            .setProgress(state.total, state.done.coerceIn(0, state.total), false)
+            .setPublicVersion(publicAppCheck(context, counts, state, stopIntent))
+            .build()
+    }
 
+    private fun publicAppCheck(
+        context: Context,
+        text: String,
+        state: BulkCheckState.Running?,
+        stopIntent: PendingIntent
+    ): Notification {
+        val builder = NotificationCompat.Builder(context, CHANNEL_PROGRESS)
+            .setSmallIcon(R.drawable.ic_scan_notification)
+            .setContentTitle("Checking app hashes")
+            .setContentText(text)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .addAction(0, "Stop", stopIntent)
+        if (state != null && state.total > 0) {
+            builder.setProgress(state.total, state.done.coerceIn(0, state.total), false)
+        } else {
+            builder.setProgress(0, 0, true)
+        }
+        return builder.build()
+    }
+
+    /**
+     * Abschluss eines Sammellaufs, auch wenn er vorzeitig endete. Ein eigener Eintrag, damit
+     * er nicht mit der Meldung eines Einzelscans kollidiert.
+     */
+    fun showBulkResult(context: Context, state: BulkCheckState.Finished) {
+        val text = BulkCheckText.summary(state)
+        val notif = NotificationCompat.Builder(context, CHANNEL_RESULT)
+            .setSmallIcon(R.drawable.ic_scan_notification)
+            .setContentTitle(BulkCheckText.title(state.reason))
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(openAppIntent(context, requestCode = 3, openAppList = true))
+            .build()
+        try {
+            NotificationManagerCompat.from(context).notify(BULK_RESULT_ID, notif)
+        } catch (_: SecurityException) {
+            // Benachrichtigungen verweigert: der Lauf ist trotzdem fertig, in der App steht das Ergebnis.
+        }
+    }
+    /**
+     * Fortschritt des Upload-Stapels. Eigener Titel und eigene Id, damit er sich klar von der
+     * Hash-Prüfung unterscheidet. Ohne App-Namen, auch nicht in der Sperrbildschirm-Fassung.
+     */
+    fun buildUpload(
+        context: Context,
+        state: UploadQueueState.Running?,
+        stopIntent: PendingIntent
+    ): Notification {
+        val builder = NotificationCompat.Builder(context, CHANNEL_PROGRESS)
+            .setSmallIcon(R.drawable.ic_scan_notification)
+            .setContentTitle("Uploading apps to VirusTotal")
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(openAppIntent(context, requestCode = 4, openAppList = true))
+            .addAction(0, "Stop", stopIntent)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+        if (state == null || state.total <= 0) {
+            return builder.setContentText("Starting…").setProgress(0, 0, true).build()
+        }
+        return builder
+            .setContentText(UploadText.progress(state))
+            .setProgress(state.total, state.resolved.coerceIn(0, state.total), false)
+            .build()
+    }
+
+    /** Abschluss des Upload-Stapels. Sagt auch, dass noch kein Urteil vorliegt. */
+    fun showUploadResult(context: Context, state: UploadQueueState.Finished) {
+        val text = UploadText.summary(state)
+        val notif = NotificationCompat.Builder(context, CHANNEL_RESULT)
+            .setSmallIcon(R.drawable.ic_scan_notification)
+            .setContentTitle(UploadText.title(state.reason))
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(openAppIntent(context, requestCode = 5, openAppList = true))
+            .build()
+        try {
+            NotificationManagerCompat.from(context).notify(UPLOAD_RESULT_ID, notif)
+        } catch (_: SecurityException) {
+            // Benachrichtigungen verweigert: das Ergebnis steht in der App.
+        }
+    }
     fun showResult(context: Context, title: String, text: String) {
         val notif = NotificationCompat.Builder(context, CHANNEL_RESULT)
             .setSmallIcon(R.drawable.ic_scan_notification)
@@ -106,7 +208,12 @@ object ScanNotifications {
     }
 
     fun cancelResult(context: Context) {
-        runCatching { NotificationManagerCompat.from(context).cancel(RESULT_ID) }
+        runCatching {
+            val manager = NotificationManagerCompat.from(context)
+            manager.cancel(RESULT_ID)
+            manager.cancel(BULK_RESULT_ID)
+            manager.cancel(UPLOAD_RESULT_ID)
+        }
     }
 
     private fun phaseTitle(phase: ScanPhase?): String = when (phase) {
@@ -117,9 +224,14 @@ object ScanNotifications {
         else -> "Scanning…"
     }
 
-    private fun openAppIntent(context: Context, requestCode: Int): PendingIntent {
+    private fun openAppIntent(
+        context: Context,
+        requestCode: Int,
+        openAppList: Boolean = false
+    ): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            if (openAppList) putExtra(MainActivity.EXTRA_OPEN_APP_LIST, true)
         }
         return PendingIntent.getActivity(
             context, requestCode, intent,

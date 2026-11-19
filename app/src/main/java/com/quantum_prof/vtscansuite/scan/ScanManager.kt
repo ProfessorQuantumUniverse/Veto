@@ -8,6 +8,7 @@ import android.provider.OpenableColumns
 import androidx.core.content.ContextCompat
 import com.quantum_prof.vtscansuite.data.model.FileReportResponse
 import com.quantum_prof.vtscansuite.data.model.SavedScan
+import com.quantum_prof.vtscansuite.data.remote.BudgetExhaustedException
 import com.quantum_prof.vtscansuite.data.remote.RateLimitException
 import com.quantum_prof.vtscansuite.data.repository.PrefsRepository
 import com.quantum_prof.vtscansuite.data.repository.SavedScansRepository
@@ -66,7 +67,8 @@ class ScanManager @Inject constructor(
     private val repository: VirusTotalRepository,
     private val hashFileUseCase: HashFileUseCase,
     private val prefs: PrefsRepository,
-    private val savedScansRepository: SavedScansRepository
+    private val savedScansRepository: SavedScansRepository,
+    private val gate: BulkWorkGate
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -129,17 +131,24 @@ class ScanManager @Inject constructor(
     fun openSaved(saved: SavedScan) {
         if (job?.isActive == true) return
         currentLabel = saved.label
+        // Die Aktualisierung ist eine einzelne Anfrage und nur eine Zugabe. Läuft gerade eine
+        // andere Arbeit an VirusTotal, wird der gespeicherte Bericht ohne Anfrage gezeigt.
+        val mayRefresh = gate.tryAcquire(BulkWorkGate.SINGLE_SCAN)
         job = scope.launch {
-            _state.value = ScanState.Running(ScanPhase.FETCHING, null, System.currentTimeMillis(), saved.label)
-            val key = prefs.apiKeyFlow.first()?.takeIf { it.isNotBlank() }
-            val fresh = if (key.isNullOrBlank()) null
-            else repository.getReport(key, saved.id, saved.isUrl).getOrNull()
+            try {
+                _state.value = ScanState.Running(ScanPhase.FETCHING, null, System.currentTimeMillis(), saved.label)
+                val key = prefs.apiKeyFlow.first()?.takeIf { it.isNotBlank() }
+                val fresh = if (key.isNullOrBlank() || !mayRefresh) null
+                else repository.getReport(key, saved.id, saved.isUrl).getOrNull()
 
-            if (fresh != null && fresh.data.attributes.lastAnalysisResults.isNotEmpty()) {
-                runCatching { savedScansRepository.upsert(saved.copy(report = fresh)) }
-                _state.value = ScanState.Success(fresh, saved.label)
-            } else {
-                _state.value = ScanState.Success(saved.report, saved.label)
+                if (fresh != null && fresh.data.attributes.lastAnalysisResults.isNotEmpty()) {
+                    runCatching { savedScansRepository.upsert(saved.copy(report = fresh)) }
+                    _state.value = ScanState.Success(fresh, saved.label)
+                } else {
+                    _state.value = ScanState.Success(saved.report, saved.label)
+                }
+            } finally {
+                if (mayRefresh) gate.release(BulkWorkGate.SINGLE_SCAN)
             }
         }
     }
@@ -197,7 +206,7 @@ class ScanManager @Inject constructor(
 
     /** Macht aus einem fehlgeschlagenen Lookup eine Meldung, die klarstellt: nichts ging raus. */
     private fun lookupFailure(error: Throwable): Throwable = when (error) {
-        is RateLimitException -> error
+        is RateLimitException, is BudgetExhaustedException -> error
         else -> Exception(
             (error.localizedMessage ?: "The hash lookup failed.") + " Nothing was uploaded."
         )
@@ -236,34 +245,54 @@ class ScanManager @Inject constructor(
     ) {
         if (job?.isActive == true) return // immer nur ein Scan gleichzeitig
         currentLabel = label
-        job = scope.launch {
-            val key = prefs.apiKeyFlow.first()?.takeIf { it.isNotBlank() }
-            if (key.isNullOrBlank()) {
-                _state.value = ScanState.Error("Your API key is missing or invalid.", label)
-                return@launch
-            }
-            _state.value = ScanState.Running(ScanPhase.CHECKING, null, System.currentTimeMillis(), label)
-            startService()
-
-            val onProgress: ProgressCallback = { phase, progress ->
-                val started = (_state.value as? ScanState.Running)?.startedAt ?: System.currentTimeMillis()
-                _state.value = ScanState.Running(phase, progress, started, label)
-            }
-
-            val result = runCatching { block(key, onProgress) }.getOrElse { Result.failure(it) }
-            _state.value = result.fold(
-                onSuccess = { ScanState.Success(it, label) },
-                onFailure = {
-                    // Eine abgelehnte Upload-Rückfrage ist kein Fehler, sondern ein Abbruch.
-                    if (it is UploadDeclinedException) ScanState.Idle
-                    else ScanState.Error(
-                        message = it.localizedMessage ?: "Scan failed.",
-                        label = label,
-                        isRateLimit = it is RateLimitException
-                    )
-                }
-            )
+        // Einzelscans teilen sich Tempo und Tageskontingent mit Hash-Prüfung und Upload-Stapel.
+        // Läuft eines davon, startet der Scan nicht, und der Nutzer erfährt es, statt dass
+        // nichts passiert. Erneut tippen genügt, sobald das Tor frei ist.
+        if (!gate.tryAcquire(BulkWorkGate.SINGLE_SCAN)) {
+            _state.value = ScanState.Error(gate.describeBusy(), label)
+            return
         }
+        job = scope.launch {
+            try {
+                runScan(label, block)
+            } finally {
+                gate.release(BulkWorkGate.SINGLE_SCAN)
+            }
+        }
+    }
+
+    private suspend fun runScan(
+        label: String,
+        block: suspend (key: String, onProgress: ProgressCallback) -> Result<FileReportResponse>
+    ) {
+        val key = prefs.apiKeyFlow.first()?.takeIf { it.isNotBlank() }
+        if (key.isNullOrBlank()) {
+            _state.value = ScanState.Error("Your API key is missing or invalid.", label)
+            return
+        }
+        _state.value = ScanState.Running(ScanPhase.CHECKING, null, System.currentTimeMillis(), label)
+        startService()
+        // Mindestabstand zur vorigen Arbeit an VirusTotal (Hash-Prüfung, Upload-Stapel).
+        gate.awaitSpacing()
+
+        val onProgress: ProgressCallback = { phase, progress ->
+            val started = (_state.value as? ScanState.Running)?.startedAt ?: System.currentTimeMillis()
+            _state.value = ScanState.Running(phase, progress, started, label)
+        }
+
+        val result = runCatching { block(key, onProgress) }.getOrElse { Result.failure(it) }
+        _state.value = result.fold(
+            onSuccess = { ScanState.Success(it, label) },
+            onFailure = {
+                // Eine abgelehnte Upload-Rückfrage ist kein Fehler, sondern ein Abbruch.
+                if (it is UploadDeclinedException) ScanState.Idle
+                else ScanState.Error(
+                    message = it.localizedMessage ?: "Scan failed.",
+                    label = label,
+                    isRateLimit = it is RateLimitException
+                )
+            }
+        )
     }
 
     /** Ergebnis als gesehen markieren (nur wenn gerade kein Scan läuft). */

@@ -3,15 +3,19 @@ package com.quantum_prof.vtscansuite.data.repository
 
 import android.util.Base64
 import com.quantum_prof.vtscansuite.data.model.FileReportResponse
+import com.quantum_prof.vtscansuite.data.remote.BudgetExhaustedException
 import com.quantum_prof.vtscansuite.data.remote.PollSchedule
 import com.quantum_prof.vtscansuite.data.remote.ProgressRequestBody
 import com.quantum_prof.vtscansuite.data.remote.RateLimitException
+import com.quantum_prof.vtscansuite.data.remote.UploadNotStartedException
 import com.quantum_prof.vtscansuite.data.remote.VTScanApiService
 import com.quantum_prof.vtscansuite.data.remote.VtApiKeyGuard
 import com.quantum_prof.vtscansuite.data.remote.VtHttpException
+import com.quantum_prof.vtscansuite.data.remote.VtUploadPath
 import com.quantum_prof.vtscansuite.domain.repository.ProgressCallback
 import com.quantum_prof.vtscansuite.domain.repository.ScanPhase
 import com.quantum_prof.vtscansuite.domain.repository.VirusTotalRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
@@ -20,13 +24,31 @@ import retrofit2.Response
 import java.io.File
 import java.security.MessageDigest
 import javax.inject.Inject
-import kotlin.time.Duration.Companion.milliseconds
 
 class VirusTotalRepositoryImpl @Inject constructor(
-    private val api: VTScanApiService
+    private val api: VTScanApiService,
+    private val budget: BudgetReserver
 ) : VirusTotalRepository {
 
-    private val sizeLimit32MB = 32 * 1024 * 1024 // 32 Megabytes
+    /**
+     * Jede Anfrage an VirusTotal geht durch diese Stelle, und hier wird auch das gemeinsame
+     * Tageskontingent reserviert: **vor** dem Senden, für Einzelscans, Hash-Prüfung und
+     * Upload-Stapel gleichermaßen. Die Aufrufer reservieren deshalb nicht noch einmal.
+     * Ist nichts mehr frei, geht nichts raus und es kommt eine [BudgetExhaustedException].
+     * Die Reservierung wird in jedem Fall wieder freigegeben, auch bei Fehler und Abbruch.
+     */
+    private suspend fun <T> budgeted(requests: Int = 1, block: suspend () -> T): T {
+        val reservation = budget.tryReserve(requests) ?: throw BudgetExhaustedException()
+        try {
+            return block()
+        } finally {
+            reservation.release()
+        }
+    }
+
+    /** Wartet die angegebenen Millisekunden. Nur für Tests austauschbar, damit sie nicht echt warten. */
+    internal var sleeper: suspend (Long) -> Unit = { delay(it) }
+
     private val analysisTimeoutMs = 6 * 60_000L     // bis zu 6 Minuten auf den Abschluss warten
 
     // Statusabfragen beginnen im Free-Tier-Takt und werden dann seltener (siehe PollSchedule).
@@ -40,12 +62,14 @@ class VirusTotalRepositoryImpl @Inject constructor(
 
     override suspend fun getFileReport(apiKey: String, hash: String): Result<FileReportResponse> {
         return try {
-            val response = api.getFileReport(apiKey, hash)
+            val response = budgeted { api.getFileReport(apiKey, hash) }
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!)
             } else {
                 Result.failure(httpError(response.code(), "API error"))
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -53,12 +77,16 @@ class VirusTotalRepositoryImpl @Inject constructor(
 
     override suspend fun getReport(apiKey: String, id: String, isUrl: Boolean): Result<FileReportResponse> {
         return try {
-            val response = if (isUrl) api.getUrlReport(apiKey, id) else api.getFileReport(apiKey, id)
+            val response = budgeted {
+                if (isUrl) api.getUrlReport(apiKey, id) else api.getFileReport(apiKey, id)
+            }
             if (response.isSuccessful && response.body() != null) {
                 Result.success(response.body()!!)
             } else {
                 Result.failure(httpError(response.code(), "API error"))
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -75,49 +103,129 @@ class VirusTotalRepositoryImpl @Inject constructor(
             // zweites Mal komplett zu lesen, wäre reine Verschwendung.
             val fileHash = knownHash ?: calculateSha256(file)
 
-            onProgress(ScanPhase.UPLOADING, 0f)
-            val rawBody = file.asRequestBody("application/octet-stream".toMediaTypeOrNull())
-            val progressBody = ProgressRequestBody(rawBody) { fraction ->
-                onProgress(ScanPhase.UPLOADING, fraction)
-            }
-            val body = MultipartBody.Part.createFormData("file", file.name, progressBody)
-
             // 1. Datei hochladen
-            val uploadResponse = if (file.length() <= sizeLimit32MB) {
-                api.uploadFile(apiKey, body)
-            } else {
-                val urlResponse = api.getUploadUrl(apiKey)
-                if (!urlResponse.isSuccessful || urlResponse.body() == null) {
-                    return Result.failure(httpError(urlResponse.code(), "Could not obtain an upload URL"))
-                }
-                val uploadUrl = urlResponse.body()!!.data
-                // Die Ziel-URL kommt aus einer API-Antwort. Vor dem ersten Byte prüfen, dass
-                // sie wirklich zu VirusTotal gehört – sonst ginge der API-Schlüssel mit.
-                if (!VtApiKeyGuard.isVirusTotalHttps(uploadUrl)) {
-                    return Result.failure(
-                        Exception("VirusTotal returned an upload address outside virustotal.com. Nothing was uploaded.")
-                    )
-                }
-                api.uploadFileToUrl(uploadUrl, apiKey, body)
+            val analysisId = when (val posted = postFile(apiKey, file, onProgress)) {
+                is PostResult.Failed -> return Result.failure(posted.error)
+                is PostResult.Posted -> posted.analysisId
             }
-
-            if (uploadResponse.isSuccessful && uploadResponse.body() != null) {
-                val analysisId = uploadResponse.body()!!.data.id
-
-                // 2. Warten, bis die Analyse abgeschlossen ist
+            // 2. Warten, bis die Analyse abgeschlossen ist
+            try {
                 awaitAnalysisCompletion(apiKey, analysisId, onProgress)
-
-                // 3. Datei-Report nachladen, bis die Engine-Ergebnisse tatsächlich vorhanden sind
-                onProgress(ScanPhase.FETCHING, null)
-                fetchPopulatedReport(apiKey, fileHash, isUrl = false, onProgress)
-            } else {
-                Result.failure(httpError(uploadResponse.code(), "Upload error"))
+            } catch (_: BudgetExhaustedException) {
+                // Die Datei ist schon eingereicht; nur die Folgeabfragen fehlen.
+                return Result.failure(BudgetExhaustedException(afterSubmission = true))
             }
+            // 3. Datei-Report nachladen, bis die Engine-Ergebnisse tatsächlich vorhanden sind
+            onProgress(ScanPhase.FETCHING, null)
+            fetchPopulatedReport(apiKey, fileHash, isUrl = false, onProgress).let { report ->
+                if (report.exceptionOrNull() is BudgetExhaustedException) {
+                    Result.failure(BudgetExhaustedException(afterSubmission = true))
+                } else {
+                    report
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
+    override suspend fun submitFile(
+        apiKey: String,
+        file: File,
+        onProgress: ProgressCallback
+    ): Result<String> {
+        return try {
+            when (val posted = postFile(apiKey, file, onProgress)) {
+                is PostResult.Posted -> Result.success(posted.analysisId)
+                is PostResult.Failed -> Result.failure(
+                    if (posted.bodySent) posted.error else UploadNotStartedException(posted.error)
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private sealed interface PostResult {
+        data class Posted(val analysisId: String) : PostResult
+
+        /** [bodySent] false: der Upload ist gescheitert, bevor ein Byte der Datei raus ging. */
+        data class Failed(val error: Throwable, val bodySent: Boolean) : PostResult
+    }
+
+    /**
+     * Der Upload selbst, von [uploadFile] und [submitFile] gemeinsam genutzt: bis 32 MB direkt
+     * an `files`, darüber über eine eigens angeforderte Upload-Adresse (zwei Anfragen).
+     */
+    private suspend fun postFile(
+        apiKey: String,
+        file: File,
+        onProgress: ProgressCallback
+    ): PostResult {
+        // Ein Upload kostet eine Anfrage, über 32 MB zwei (Upload-Adresse und Upload). Beide
+        // werden zusammen reserviert: reicht das Kontingent nur für eine, geht keine raus.
+        val reservation = budget.tryReserve(VtUploadPath.requestsFor(file.length()))
+            ?: return PostResult.Failed(BudgetExhaustedException(), bodySent = false)
+        try {
+            return postFileReserved(apiKey, file, onProgress)
+        } finally {
+            reservation.release()
+        }
+    }
+
+    private suspend fun postFileReserved(
+        apiKey: String,
+        file: File,
+        onProgress: ProgressCallback
+    ): PostResult {
+        onProgress(ScanPhase.UPLOADING, 0f)
+        val rawBody = file.asRequestBody("application/octet-stream".toMediaTypeOrNull())
+        val progressBody = ProgressRequestBody(rawBody) { fraction ->
+            onProgress(ScanPhase.UPLOADING, fraction)
+        }
+        val body = MultipartBody.Part.createFormData("file", file.name, progressBody)
+
+        val uploadResponse = if (!VtUploadPath.needsUploadUrl(file.length())) {
+            api.uploadFile(apiKey, body)
+        } else {
+            val urlResponse = try {
+                api.getUploadUrl(apiKey)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                return PostResult.Failed(e, bodySent = false)
+            }
+            if (!urlResponse.isSuccessful || urlResponse.body() == null) {
+                return PostResult.Failed(
+                    httpError(urlResponse.code(), "Could not obtain an upload URL", urlResponse.retryAfterSeconds()),
+                    bodySent = false
+                )
+            }
+            val uploadUrl = urlResponse.body()!!.data
+            // Die Ziel-URL kommt aus einer API-Antwort. Vor dem ersten Byte prüfen, dass
+            // sie wirklich zu VirusTotal gehört – sonst ginge der API-Schlüssel mit.
+            if (!VtApiKeyGuard.isVirusTotalHttps(uploadUrl)) {
+                return PostResult.Failed(
+                    Exception("VirusTotal returned an upload address outside virustotal.com. Nothing was uploaded."),
+                    bodySent = false
+                )
+            }
+            api.uploadFileToUrl(uploadUrl, apiKey, body)
+        }
+        val responseBody = uploadResponse.body()
+        return if (uploadResponse.isSuccessful && responseBody != null) {
+            PostResult.Posted(responseBody.data.id)
+        } else {
+            PostResult.Failed(
+                httpError(uploadResponse.code(), "Upload error", uploadResponse.retryAfterSeconds()),
+                bodySent = true
+            )
+        }
+    }
     override suspend fun scanUrl(
         apiKey: String,
         url: String,
@@ -129,14 +237,22 @@ class VirusTotalRepositoryImpl @Inject constructor(
 
             // 1. Schnellpfad: bereits bekannte (und analysierte) URL direkt abrufen
             onProgress(ScanPhase.CHECKING, null)
-            val cached = runCatching { api.getUrlReport(apiKey, precomputedId) }.getOrNull()
+            val cached = try {
+                budgeted { api.getUrlReport(apiKey, precomputedId) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: BudgetExhaustedException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
             if (cached?.isSuccessful == true && cached.body().isPopulated()) {
                 return Result.success(cached.body()!!)
             }
 
             // 2. URL zur Analyse einreichen
             onProgress(ScanPhase.SUBMITTING, null)
-            val submit = api.submitUrl(apiKey, normalized)
+            val submit = budgeted { api.submitUrl(apiKey, normalized) }
             if (!submit.isSuccessful || submit.body() == null) {
                 return Result.failure(httpError(submit.code(), "Could not submit the URL"))
             }
@@ -149,6 +265,8 @@ class VirusTotalRepositoryImpl @Inject constructor(
             onProgress(ScanPhase.FETCHING, null)
             val finalId = urlInfoId ?: precomputedId
             fetchPopulatedReport(apiKey, finalId, isUrl = true, onProgress)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -170,12 +288,19 @@ class VirusTotalRepositoryImpl @Inject constructor(
         var urlInfoId: String? = null
         while (System.currentTimeMillis() < deadline) {
             onProgress(ScanPhase.ANALYZING, null)
-            delay(schedule.nextDelayMs().milliseconds)
-            val response = runCatching { api.getAnalysisReport(apiKey, analysisId) }.getOrNull()
-                ?: continue
+            sleeper(schedule.nextDelayMs())
+            val response = try {
+                budgeted { api.getAnalysisReport(apiKey, analysisId) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: BudgetExhaustedException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            } ?: continue
             if (response.code() == 429) {
                 // Rate-Limit: nicht sofort erneut fragen.
-                response.retryAfterMs()?.let { delay(it.milliseconds) }
+                response.retryAfterMs()?.let { sleeper(it) }
                 continue
             }
             val body = response.body()
@@ -212,8 +337,10 @@ class VirusTotalRepositoryImpl @Inject constructor(
         var tries = 0
         while (tries < populateRetries) {
             if (last.getOrNull().isPopulated()) return last
+            // Ohne Kontingent bringt Warten nichts: der nächste Versuch scheitert genauso.
+            if (last.exceptionOrNull() is BudgetExhaustedException) return last
             onProgress(ScanPhase.ANALYZING, null) // VirusTotal stellt das Ergebnis noch fertig
-            delay(schedule.nextDelayMs().milliseconds)
+            sleeper(schedule.nextDelayMs())
             tries++
             last = getReport(apiKey, id, isUrl)
         }
@@ -237,8 +364,10 @@ class VirusTotalRepositoryImpl @Inject constructor(
      * Alles andere behält seinen Status-Code, damit die Aufrufer ein echtes "nicht gefunden"
      * (404) von einem Fehlschlag unterscheiden können.
      */
-    private fun httpError(code: Int, context: String): Exception =
-        if (code == 429) RateLimitException() else VtHttpException(code, "$context (code $code)")
+    private fun httpError(code: Int, context: String, retryAfterSeconds: Long? = null): Exception =
+        if (code == 429) RateLimitException(retryAfterSeconds) else VtHttpException(code, "$context (code $code)")
+
+    private fun Response<*>.retryAfterSeconds(): Long? = headers()["Retry-After"]?.trim()?.toLongOrNull()
 
     private fun calculateSha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")

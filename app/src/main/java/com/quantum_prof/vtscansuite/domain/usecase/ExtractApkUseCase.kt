@@ -55,27 +55,44 @@ class ExtractApkUseCase @Inject constructor(
             val isWebApk = isWebApk(appInfo.packageName)
             if (isWebApk && hideWebApks) continue
 
-            val apkFile = File(appInfo.sourceDir)
-            if (!apkFile.exists() || !apkFile.canRead()) continue
-
-            val packageInfo = runCatching { pm.getPackageInfo(appInfo.packageName, 0) }.getOrNull()
-            result.add(
-                InstalledApp(
-                    name = runCatching { pm.getApplicationLabel(appInfo).toString() }
-                        .getOrDefault(appInfo.packageName),
-                    packageName = appInfo.packageName,
-                    apkFile = apkFile,
-                    isSystem = isSystem,
-                    isWebApk = isWebApk,
-                    versionName = packageInfo?.versionName,
-                    versionCode = packageInfo?.longVersionCode ?: 0L,
-                    apkSize = apkFile.length()
-                )
-            )
+            result.add(toInstalledApp(pm, appInfo, isSystem, isWebApk) ?: continue)
         }
         return result.sortedWith(compareBy({ it.isSystem }, { it.name.lowercase() }))
     }
 
+    /**
+     * Eine einzelne installierte App, frisch vom System, oder null, wenn sie nicht (mehr)
+     * installiert ist oder ihre APK nicht lesbar ist. Anders als die Liste filtert das hier
+     * nichts weg: System-Apps und WebAPKs kommen mit ihren Kennzeichen zurück, damit der
+     * Aufrufer entscheiden kann.
+     */
+    fun getInstalledApp(packageName: String): InstalledApp? {
+        val pm = context.packageManager
+        val appInfo = runCatching { pm.getApplicationInfo(packageName, 0) }.getOrNull() ?: return null
+        return toInstalledApp(pm, appInfo, appInfo.isSystemApp(), isWebApk(appInfo.packageName))
+    }
+
+    private fun toInstalledApp(
+        pm: PackageManager,
+        appInfo: ApplicationInfo,
+        isSystem: Boolean,
+        isWebApk: Boolean
+    ): InstalledApp? {
+        val apkFile = File(appInfo.sourceDir)
+        if (!apkFile.exists() || !apkFile.canRead()) return null
+        val packageInfo = runCatching { pm.getPackageInfo(appInfo.packageName, 0) }.getOrNull()
+        return InstalledApp(
+            name = runCatching { pm.getApplicationLabel(appInfo).toString() }
+                .getOrDefault(appInfo.packageName),
+            packageName = appInfo.packageName,
+            apkFile = apkFile,
+            isSystem = isSystem,
+            isWebApk = isWebApk,
+            versionName = packageInfo?.versionName,
+            versionCode = packageInfo?.longVersionCode ?: 0L,
+            apkSize = apkFile.length()
+        )
+    }
     /**
      * Alle installierten Paketnamen, unabhängig von Filtern. Dient dazu, Ergebnisse zu
      * deinstallierten Apps zu verwerfen, ohne dabei ausgeblendete Apps mitzuräumen.
