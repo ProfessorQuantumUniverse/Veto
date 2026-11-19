@@ -12,6 +12,7 @@ import androidx.core.app.ServiceCompat
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -23,6 +24,10 @@ import javax.inject.Inject
  * Ein Durchlauf über hundert Apps dauert bei vier Anfragen pro Minute knapp eine halbe
  * Stunde – ohne Vordergrunddienst wäre er vorbei, sobald der Nutzer die App verlässt.
  * Gestartet wird der Dienst nur durch eine Nutzeraktion, nie von selbst.
+ *
+ * Das ist keine Garantie: Android kann den Prozess auch mit Vordergrunddienst beenden
+ * (etwa bei Speicherdruck oder wenn der Nutzer die App stoppt). Jedes Ergebnis wird sofort
+ * gespeichert, deshalb geht dabei nichts verloren, nur der Lauf endet.
  */
 @AndroidEntryPoint
 class AppCheckService : Service() {
@@ -31,6 +36,7 @@ class AppCheckService : Service() {
     lateinit var appCheckManager: AppCheckManager
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var observer: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -47,25 +53,34 @@ class AppCheckService : Service() {
         }
 
         val initial = appCheckManager.state.value as? BulkCheckState.Running
-        startInForeground(initial?.done ?: 0, initial?.total ?: 0, initial?.currentApp.orEmpty())
+        startInForeground(initial)
 
-        scope.launch {
+        // Ein zweiter Start darf keinen zweiten Beobachter anlegen.
+        observer?.cancel()
+        observer = scope.launch {
             appCheckManager.state.collect { state ->
                 when (state) {
                     is BulkCheckState.Running -> update(state)
-                    // Das Ergebnis zeigt der Bildschirm; hier reicht es, sich zu beenden.
-                    else -> finish()
+                    is BulkCheckState.Finished -> {
+                        // Den Lauf hat der Nutzer abgebrochen: er weiß es, keine Meldung.
+                        if (state.reason != StopReason.CANCELLED) {
+                            ScanNotifications.showBulkResult(this@AppCheckService, state)
+                        }
+                        finish()
+                    }
+
+                    BulkCheckState.Idle -> finish()
                 }
             }
         }
         return START_NOT_STICKY
     }
 
-    private fun startInForeground(done: Int, total: Int, currentApp: String) {
+    private fun startInForeground(state: BulkCheckState.Running?) {
         ServiceCompat.startForeground(
             this,
             ScanNotifications.APP_CHECK_ID,
-            ScanNotifications.buildAppCheck(this, done, total, currentApp, stopIntent(this)),
+            ScanNotifications.buildAppCheck(this, state, stopIntent(this)),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
         )
     }
@@ -74,9 +89,7 @@ class AppCheckService : Service() {
         try {
             NotificationManagerCompat.from(this).notify(
                 ScanNotifications.APP_CHECK_ID,
-                ScanNotifications.buildAppCheck(
-                    this, state.done, state.total, state.currentApp, stopIntent(this)
-                )
+                ScanNotifications.buildAppCheck(this, state, stopIntent(this))
             )
         } catch (_: SecurityException) {
             // Der Nutzer hat Benachrichtigungen verweigert. Der Lauf geht trotzdem weiter,
@@ -85,7 +98,8 @@ class AppCheckService : Service() {
     }
 
     private fun finish() {
-        scope.cancel()
+        observer?.cancel()
+        observer = null
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

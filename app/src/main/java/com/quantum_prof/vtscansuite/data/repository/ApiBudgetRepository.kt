@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -29,7 +30,7 @@ import javax.inject.Singleton
 @Singleton
 class ApiBudgetRepository @Inject constructor(
     @ApplicationContext private val context: Context
-) {
+) : BudgetReserver {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val dayKey = stringPreferencesKey("day_utc")
@@ -39,10 +40,29 @@ class ApiBudgetRepository @Inject constructor(
         if (preferences[dayKey] == todayUtc()) preferences[usedKey] ?: 0 else 0
     }
 
+    /**
+     * Gemeinsame Rechenlogik für Hash-Prüfung und Upload: zählt noch nicht gespeicherte
+     * Anfragen mit und erlaubt Reservierungen (siehe [RequestBudget]).
+     */
+    private val budget = RequestBudget(DAILY_LIMIT) { usedToday.first() }
+
     /** Aus dem Netzwerk-Interceptor aufgerufen; darf nicht blockieren. */
     fun recordRequest() {
-        scope.launch { record() }
+        budget.requestStarted()
+        scope.launch {
+            try {
+                record()
+            } finally {
+                budget.requestPersisted()
+            }
+        }
     }
+
+    /**
+     * Reserviert [requests] Anfragen vom Tageskontingent oder liefert null, wenn es nicht
+     * mehr reicht. Aufrufer geben die Reservierung nach den Anfragen wieder frei.
+     */
+    override suspend fun tryReserve(requests: Int): RequestBudget.Reservation? = budget.tryReserve(requests)
 
     private suspend fun record() {
         val today = todayUtc()

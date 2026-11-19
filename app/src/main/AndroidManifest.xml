@@ -48,5 +48,10 @@
             android:name=".scan.AppCheckService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- Hält den Upload-Stapel am Leben. Startet nur, nachdem der Nutzer den Stapel bestätigt hat. -->
+        <service
+            android:name=".scan.UploadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>

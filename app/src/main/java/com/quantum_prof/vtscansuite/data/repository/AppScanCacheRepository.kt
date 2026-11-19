@@ -55,6 +55,14 @@ class AppScanCacheRepository @Inject constructor(
         }
     }
 
+    /** Vergisst das Ergebnis zu einer App, damit die nächste Hash-Prüfung sie neu nachschlägt. */
+    suspend fun remove(packageName: String) {
+        context.appScansStore.edit { prefs ->
+            val kept = decode(prefs[key]).filterNot { it.packageName == packageName }
+            prefs[key] = json.encodeToString(serializer, kept)
+        }
+    }
+
     suspend fun clear() {
         context.appScansStore.edit { prefs -> prefs.remove(key) }
     }

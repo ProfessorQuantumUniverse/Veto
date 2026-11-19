@@ -33,6 +33,20 @@ interface VirusTotalRepository {
         onProgress: ProgressCallback = { _, _ -> }
     ): Result<FileReportResponse>
 
+    /**
+     * Reicht die Datei nur ein: ein Upload, **keine** Statusabfragen und kein Bericht. Liefert
+     * die Analyse-ID. Der Bericht kommt später über die normale Hash-Prüfung.
+     *
+     * Scheitert der Upload, bevor ein Byte gesendet wurde, steht im Fehler eine
+     * [com.quantum_prof.vtscansuite.data.remote.UploadNotStartedException]; nur dann ist
+     * sicher, dass nichts angekommen ist.
+     */
+    suspend fun submitFile(
+        apiKey: String,
+        file: File,
+        onProgress: ProgressCallback = { _, _ -> }
+    ): Result<String>
+
     suspend fun scanUrl(
         apiKey: String,
         url: String,

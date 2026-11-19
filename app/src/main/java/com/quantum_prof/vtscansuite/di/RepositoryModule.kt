@@ -1,6 +1,8 @@
 // di/RepositoryModule.kt
 package com.quantum_prof.vtscansuite.di
 
+import com.quantum_prof.vtscansuite.data.repository.ApiBudgetRepository
+import com.quantum_prof.vtscansuite.data.repository.BudgetReserver
 import com.quantum_prof.vtscansuite.data.repository.VirusTotalRepositoryImpl
 import com.quantum_prof.vtscansuite.domain.repository.VirusTotalRepository
 import dagger.Binds
@@ -18,4 +20,10 @@ abstract class RepositoryModule {
     abstract fun bindVirusTotalRepository(
         impl: VirusTotalRepositoryImpl
     ): VirusTotalRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindBudgetReserver(
+        impl: ApiBudgetRepository
+    ): BudgetReserver
 }
