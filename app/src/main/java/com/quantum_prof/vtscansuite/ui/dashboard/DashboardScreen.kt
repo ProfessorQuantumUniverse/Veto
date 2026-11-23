@@ -42,6 +42,9 @@ import com.quantum_prof.vtscansuite.data.model.AppScanOutcome
 import com.quantum_prof.vtscansuite.data.model.AppScanRecord
 import com.quantum_prof.vtscansuite.data.repository.ApiBudgetRepository
 import com.quantum_prof.vtscansuite.scan.BulkCheckState
+import com.quantum_prof.vtscansuite.scan.BulkCheckText
+import com.quantum_prof.vtscansuite.scan.UploadCandidate
+import com.quantum_prof.vtscansuite.scan.UploadQueueState
 import com.quantum_prof.vtscansuite.scan.StopReason
 import com.quantum_prof.vtscansuite.ui.components.Pill
 import androidx.compose.foundation.clickable
@@ -60,6 +63,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -113,6 +118,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -165,7 +173,40 @@ enum class DashboardSubScreen {
     CustomFileScan,
     InstalledApps,
     SavedScans,
-    Settings
+    Settings,
+    UploadReview
+}
+
+/**
+ * Der Zustand der Startseite, der eine Reise zur Ergebnisansicht und zurück überstehen muss:
+ * welcher Unterbildschirm offen ist, Suchtext, Filter und die Scrollposition der Liste.
+ *
+ * Wer ihn über dem Bildschirmwechsel anlegt ([rememberDashboardViewState] in der Activity),
+ * behält ihn, auch wenn [DashboardScreen] zwischendurch aus der Komposition verschwindet.
+ * Bis auf die Scrollposition überlebt er auch das Neuerzeugen der Activity.
+ */
+@Stable
+class DashboardViewState internal constructor(
+    val screenState: MutableState<DashboardSubScreen>,
+    val searchQueryState: MutableState<String>,
+    val filterState: MutableState<AppFilter>,
+    val appListState: LazyListState
+)
+
+/** Wohin "Zurück" von einem Unterbildschirm führt. */
+private fun backTarget(screen: DashboardSubScreen): DashboardSubScreen =
+    if (screen == DashboardSubScreen.UploadReview) DashboardSubScreen.InstalledApps
+    else DashboardSubScreen.Home
+
+@Composable
+fun rememberDashboardViewState(): DashboardViewState {
+    val screen = rememberSaveable { mutableStateOf(DashboardSubScreen.Home) }
+    val query = rememberSaveable { mutableStateOf("") }
+    val filter = rememberSaveable { mutableStateOf(AppFilter.ALL) }
+    val listState = rememberLazyListState()
+    return remember(screen, query, filter, listState) {
+        DashboardViewState(screen, query, filter, listState)
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -206,15 +247,22 @@ fun DashboardScreen(
     onCheckAllHashes: () -> Unit = {},
     onCancelBulkCheck: () -> Unit = {},
     onAcknowledgeBulkCheck: () -> Unit = {},
-    onRefreshApps: () -> Unit = {}
+    onRefreshApps: () -> Unit = {},
+    uploadCandidates: List<UploadCandidate> = emptyList(),
+    uploadState: UploadQueueState = UploadQueueState.Idle,
+    onStartUpload: (Set<String>) -> Unit = {},
+    onCancelUpload: () -> Unit = {},
+    onResumeUpload: () -> Unit = {},
+    onAcknowledgeUpload: () -> Unit = {},
+    viewState: DashboardViewState = rememberDashboardViewState()
 ) {
     val view = LocalView.current
-    var currentScreen by remember { mutableStateOf(DashboardSubScreen.Home) }
+    var currentScreen by viewState.screenState
 
     // Systemzurück auf einem Unterbildschirm -> zurück zur Startseite (App nicht schließen)
     BackHandler(enabled = currentScreen != DashboardSubScreen.Home) {
         triggerHaptic(view, HapticType.CLICK)
-        currentScreen = DashboardSubScreen.Home
+        currentScreen = backTarget(currentScreen)
     }
 
     // Auslöser für den Sammellauf: eingeklappt, ausgeklappt, und dann die Rückfrage.
@@ -269,6 +317,7 @@ fun DashboardScreen(
                                 DashboardSubScreen.InstalledApps -> "App Scanner"
                                 DashboardSubScreen.SavedScans -> "Saved Scans"
                                 DashboardSubScreen.Settings -> "Settings"
+                                DashboardSubScreen.UploadReview -> "Upload unknown apps"
                             },
                             fontWeight = FontWeight.Black,
                             style = MaterialTheme.typography.titleLarge
@@ -278,7 +327,7 @@ fun DashboardScreen(
                         if (currentScreen != DashboardSubScreen.Home) {
                             IconButton(onClick = {
                                 triggerHaptic(view, HapticType.CLICK)
-                                currentScreen = DashboardSubScreen.Home
+                                currentScreen = backTarget(currentScreen)
                             }) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                             }
@@ -293,7 +342,7 @@ fun DashboardScreen(
                                 Icon(Icons.Default.Settings, contentDescription = "Settings")
                             }
                         }
-                        if (currentScreen == DashboardSubScreen.InstalledApps) {
+                        if (currentScreen == DashboardSubScreen.InstalledApps && uploadState !is UploadQueueState.Running) {
                             // Erster Tipp klappt die Beschriftung aus und erklärt damit, was
                             // passiert; der zweite öffnet die Rückfrage. In der Leiste, damit
                             // weder Kopfzeile noch Liste verdeckt werden.
@@ -358,7 +407,19 @@ fun DashboardScreen(
                         onRequestBulkRun = { showRunWarning = true },
                         onCancelBulkCheck = onCancelBulkCheck,
                         onAcknowledgeBulkCheck = onAcknowledgeBulkCheck,
-                        onRefreshApps = onRefreshApps
+                        onRefreshApps = onRefreshApps,
+                        uploadCandidateCount = uploadCandidates.size,
+                        onOpenUploadReview = { currentScreen = DashboardSubScreen.UploadReview },
+                        viewState = viewState
+                    )
+                    DashboardSubScreen.UploadReview -> UploadReviewScreen(
+                        candidates = uploadCandidates,
+                        state = uploadState,
+                        hashCheckRunning = bulkCheck is BulkCheckState.Running,
+                        onStart = onStartUpload,
+                        onCancel = onCancelUpload,
+                        onResume = onResumeUpload,
+                        onAcknowledge = onAcknowledgeUpload
                     )
                     DashboardSubScreen.SavedScans -> SavedScansScreen(
                         savedScans = savedScans,
@@ -1183,11 +1244,15 @@ fun InstalledAppsScreen(
     onRequestBulkRun: () -> Unit = {},
     onCancelBulkCheck: () -> Unit = {},
     onAcknowledgeBulkCheck: () -> Unit = {},
-    onRefreshApps: () -> Unit = {}
+    onRefreshApps: () -> Unit = {},
+    /** Wie viele Apps zum Upload angeboten werden dürfen (siehe UploadEligibilityRules). */
+    uploadCandidateCount: Int = 0,
+    onOpenUploadReview: () -> Unit = {},
+    viewState: DashboardViewState = rememberDashboardViewState()
 ) {
     val view = LocalView.current
-    var searchQuery by remember { mutableStateOf("") }
-    var filter by remember { mutableStateOf(AppFilter.ALL) }
+    var searchQuery by viewState.searchQueryState
+    var filter by viewState.filterState
     var detailApp by remember { mutableStateOf<InstalledApp?>(null) }
 
     val apps = appList.appsOrEmpty
@@ -1241,6 +1306,7 @@ fun InstalledAppsScreen(
             // Alles scrollt mit – nur die Filter bleiben oben kleben, damit die Liste
             // möglichst viel Platz bekommt.
             LazyColumn(
+                state = viewState.appListState,
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(top = 16.dp, bottom = 108.dp)
@@ -1269,6 +1335,21 @@ fun InstalledAppsScreen(
                     }
                 }
 
+                if (uploadCandidateCount > 0) {
+                    item(key = "uploadEntry") {
+                        Box(modifier = Modifier.padding(horizontal = 24.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    triggerHaptic(view, HapticType.CLICK)
+                                    onOpenUploadReview()
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Review $uploadCandidateCount unknown apps for upload")
+                            }
+                        }
+                    }
+                }
                 item(key = "search") {
                     OutlinedTextField(
                         value = searchQuery,
@@ -1463,7 +1544,7 @@ private fun BulkRunAction(
 }
 
 /** Filter über der Liste. Bewusst nur Zustände, keine Bewertung. */
-private enum class AppFilter(val label: String) {
+enum class AppFilter(val label: String) {
     ALL("All"),
     UNCHECKED("Unchecked"),
     UNKNOWN("Unknown")
@@ -2005,7 +2086,7 @@ private fun BulkRunningPill(
             ) {
                 Column(modifier = Modifier.weight(1f, fill = false)) {
                     Text(
-                        "Checking ${state.done + 1} of ${state.total}",
+                        BulkCheckText.progress(state),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -2023,7 +2104,7 @@ private fun BulkRunningPill(
             }
             LinearProgressIndicator(
                 progress = {
-                    if (state.total == 0) 0f else state.done.toFloat() / state.total.toFloat()
+                    state.fraction
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2047,9 +2128,12 @@ private fun BulkFinishedBanner(
         StopReason.RATE_LIMITED -> "VirusTotal asked us to slow down"
         StopReason.NO_API_KEY -> "No API key saved"
         StopReason.CANCELLED -> "Stopped"
+        StopReason.ERROR -> "Stopped unexpectedly"
+        StopReason.BUSY -> "Another operation is running"
     }
     val detail = when (state.reason) {
         StopReason.NO_API_KEY -> "Add your VirusTotal key in Settings first."
+        StopReason.BUSY -> "A single scan or an upload batch is using VirusTotal right now. Run the check again when it has finished."
         StopReason.DAILY_LIMIT ->
             "The free key allows ${ApiBudgetRepository.DAILY_LIMIT} requests a day. " +
                 "${state.remainingApps} apps are left for tomorrow."

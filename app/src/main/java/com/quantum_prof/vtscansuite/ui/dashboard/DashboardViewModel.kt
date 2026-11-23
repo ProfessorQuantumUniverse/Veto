@@ -21,6 +21,11 @@ import com.quantum_prof.vtscansuite.scan.AppCheckManager
 import com.quantum_prof.vtscansuite.scan.BulkCheckState
 import com.quantum_prof.vtscansuite.scan.ScanManager
 import com.quantum_prof.vtscansuite.scan.ScanState
+import com.quantum_prof.vtscansuite.scan.UploadCandidate
+import com.quantum_prof.vtscansuite.scan.UploadConsent
+import com.quantum_prof.vtscansuite.scan.UploadEligibilityRules
+import com.quantum_prof.vtscansuite.scan.UploadQueueManager
+import com.quantum_prof.vtscansuite.scan.UploadQueueState
 import com.quantum_prof.vtscansuite.scan.UploadSubject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -48,7 +53,8 @@ class DashboardViewModel @Inject constructor(
     private val extractApkUseCase: ExtractApkUseCase,
     private val appIconLoader: AppIconLoader,
     private val prefsRepository: PrefsRepository,
-    private val savedScansRepository: SavedScansRepository
+    private val savedScansRepository: SavedScansRepository,
+    private val uploadQueueManager: UploadQueueManager
 ) : ViewModel() {
 
     // UI-Status leitet sich vom app-weiten ScanManager ab (überlebt die Activity)
@@ -79,7 +85,10 @@ class DashboardViewModel @Inject constructor(
                 emit(AppListState.Ready(apps))
             }
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppListState.Loading)
+        // Lazily statt WhileSubscribed: verlässt der Nutzer die Startseite (Ergebnisansicht), darf die
+        // Liste nicht nach ein paar Sekunden neu eingelesen werden. Sonst stünde beim Zurückkommen
+        // kurz "Loading" da, und die Scrollposition wäre weg.
+        .stateIn(viewModelScope, SharingStarted.Lazily, AppListState.Loading)
 
     /** Lädt ein App-Icon, sobald eine Zeile sichtbar wird. */
     val loadAppIcon: suspend (String) -> ImageBitmap? = appIconLoader::load
@@ -99,6 +108,22 @@ class DashboardViewModel @Inject constructor(
     /** Stand des Sammellaufs. */
     val bulkCheck: StateFlow<BulkCheckState> = appCheckManager.state
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), BulkCheckState.Idle)
+
+    /** Stand des Upload-Stapels (nur im Speicher). */
+    val uploadState: StateFlow<UploadQueueState> = uploadQueueManager.state
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UploadQueueState.Idle)
+
+    /**
+     * Apps, die zum Upload angeboten werden dürfen: bestätigt unbekannt, zur installierten
+     * Fassung passend, lesbar, keine System-App und kein WebAPK. Das Dateisystem wird dafür
+     * angefasst, deshalb im IO-Kontext.
+     */
+    val uploadCandidates: StateFlow<List<UploadCandidate>> =
+        combine(appList, appRecords) { list, records ->
+            UploadEligibilityRules.candidates(list.appsOrEmpty, records)
+        }
+            .flowOn(Dispatchers.IO)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** Heute verbrauchte VirusTotal-Anfragen (lokal mitgezählt). */
     val requestsUsedToday: StateFlow<Int> = apiBudget.usedToday
@@ -216,6 +241,24 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun cancelBulkCheck() = appCheckManager.cancel()
+
+    /**
+     * Startet den Upload-Stapel für genau die bestätigten Pakete. Aus der Auswahl wird nur
+     * übernommen, was aktuell zur Auswahl angeboten wird: ein Paketname von außen genügt nicht.
+     */
+    fun startUpload(confirmedPackages: Set<String>) {
+        val chosen = uploadCandidates.value.filter { it.packageName in confirmedPackages }
+        if (chosen.isEmpty() || chosen.size > UploadConsent.MAX_ITEMS) return
+        uploadQueueManager.start(UploadConsent.create(chosen))
+    }
+
+    fun cancelUpload() = uploadQueueManager.cancel()
+
+    fun resumeUpload() {
+        uploadQueueManager.resume()
+    }
+
+    fun acknowledgeUpload() = uploadQueueManager.acknowledge()
 
     fun acknowledgeBulkCheck() = appCheckManager.acknowledge()
 
