@@ -1,0 +1,5 @@
+Maintenance release.
+
+Nothing in the app itself has changed since version 3.0. That release could not be published on F-Droid: the APK was built from a different commit than the release tag, so F-Droid could not verify its own build against it.
+
+This version is built from the tagged commit and no longer writes the source commit into the APK, so the verified build succeeds and F-Droid can ship the batch scanning release.

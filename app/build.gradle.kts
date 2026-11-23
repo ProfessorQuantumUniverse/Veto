@@ -17,8 +17,8 @@ android {
         applicationId = "com.quantum_prof.vtscansuite"
         minSdk = 30
         targetSdk = 36
-        versionCode = 6
-        versionName = "3.0"
+        versionCode = 7
+        versionName = "3.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -31,6 +31,13 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+
+            vcsInfo {
+                // F-Droid baut den getaggten Commit und vergleicht das Ergebnis mit der
+                // veroeffentlichten APK. Der eingebettete Commit-Hash wuerde dabei immer
+                // abweichen, also wird er nicht in die APK geschrieben.
+                include = false
+            }
         }
     }
     compileOptions {
